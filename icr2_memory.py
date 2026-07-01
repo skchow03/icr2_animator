@@ -24,6 +24,8 @@ import ctypes.wintypes
 import struct
 from typing import List, Optional, Tuple
 
+from icr2_versions import ICR2_VERSION_CONFIGS, normalize_version
+
 import pymem
 import win32gui
 import win32process
@@ -193,7 +195,7 @@ class ICR2Memory:
         """
         Construct and attach.
 
-        :param version: 'DOS' or 'REND32A'
+        :param version: one of the known ICR2 version identifiers
         :param signature_bytes: optional override of sentinel bytes (defaults chosen per version)
         :param signature_offset: optional override of static offset to EXE base
         :param window_keywords: optional override of window title keywords
@@ -205,19 +207,14 @@ class ICR2Memory:
         self.window_title: Optional[str] = None
         self.verbose = bool(verbose)
 
-        v = version.upper()
-        if signature_bytes is None or signature_offset is None or window_keywords is None:
-            if v == "REND32A":
-                window_keywords = ["dosbox", "cart"]
-                # ASCII "license with Bob" (reverse engineered sentinel)
-                signature_bytes = bytes.fromhex("6C 69 63 65 6E 73 65 20 77 69 74 68 20 42 6F 62")
-                signature_offset = int("B1C0C", 16)
-            elif v == "DOS":
-                window_keywords = ["dosbox", "indycar"]
-                signature_bytes = bytes.fromhex("6C 69 63 65 6E 73 65 20 77 69 74 68 20 42 6F 62")
-                signature_offset = int("A0D78", 16)
-            else:
-                raise ValueError("version must be 'DOS' or 'REND32A'")
+        v = normalize_version(version)
+        version_config = ICR2_VERSION_CONFIGS[v]
+        if signature_bytes is None:
+            signature_bytes = version_config.signature_bytes
+        if signature_offset is None:
+            signature_offset = version_config.signature_offset
+        if window_keywords is None:
+            window_keywords = list(version_config.window_keywords)
 
         info = find_pid_by_window_title(window_keywords)
         if not info:

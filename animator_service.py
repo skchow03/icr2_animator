@@ -13,13 +13,14 @@ import time
 from typing import Any
 
 from icr2_object_animator import ICR2ObjectAnimator
+from icr2_versions import DEFAULT_ICR2_VERSION, normalize_version
 
 
 class AnimatorService:
     """Coordinate object animation runtime state and worker threads."""
 
-    def __init__(self, version: str = "REND32A", verbose: bool = True):
-        self.version = version
+    def __init__(self, version: str = DEFAULT_ICR2_VERSION, verbose: bool = True):
+        self.version = normalize_version(version)
         self.verbose = verbose
         self.animator: ICR2ObjectAnimator | None = None
         self.threads: list[threading.Thread] = []
@@ -35,7 +36,7 @@ class AnimatorService:
         """Set the ICR2/DOSBox version used by future animation runs."""
         if self.is_running():
             raise RuntimeError("Cannot change version while animations are running")
-        self.version = version
+        self.version = normalize_version(version)
 
     def start(self, objects: list[dict[str, Any]]):
         """Connect to DOSBox, discover configured objects, and start animations."""
