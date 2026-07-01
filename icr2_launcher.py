@@ -53,7 +53,7 @@ class ICR2Launcher(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("ICR2 Animator Launcher")
-        self.geometry("920x620")
+        self.geometry("1020x700")
 
         self.objects: list[dict[str, Any]] = []
         self.current_index: int | None = None
@@ -67,6 +67,8 @@ class ICR2Launcher(tk.Tk):
         self.name_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="ping_pong_path")
         self.start_delay_var = tk.StringVar(value="0")
+        self.search_coord_vars = [tk.StringVar(value="0") for _ in range(3)]
+        self.spin_rate_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
 
         self._build_widgets()
@@ -120,21 +122,30 @@ class ICR2Launcher(tk.Tk):
         editor.columnconfigure(1, weight=1)
         editor.rowconfigure(4, weight=1)
 
-        ttk.Label(editor, text="name").grid(row=0, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="Object name").grid(row=0, column=0, sticky="nw", padx=8, pady=6)
         self.name_entry = ttk.Entry(editor, textvariable=self.name_var)
         self.name_entry.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="mode").grid(row=1, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="Animation mode").grid(row=1, column=0, sticky="nw", padx=8, pady=6)
         self.mode_combo = ttk.Combobox(editor, textvariable=self.mode_var, values=sorted(VALID_MODES), state="readonly")
         self.mode_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="start_delay_seconds").grid(row=2, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="Start delay (seconds)").grid(row=2, column=0, sticky="nw", padx=8, pady=6)
         self.start_delay_entry = ttk.Entry(editor, textvariable=self.start_delay_var)
         self.start_delay_entry.grid(row=2, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="search_coords (JSON list)").grid(row=3, column=0, sticky="nw", padx=8, pady=6)
-        self.search_text = tk.Text(editor, height=2, wrap="none")
-        self.search_text.grid(row=3, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="waypoints (JSON list)").grid(row=4, column=0, sticky="nw", padx=8, pady=6)
-        self.waypoints_text = tk.Text(editor, height=12, wrap="none")
-        self.waypoints_text.grid(row=4, column=1, sticky="nsew", padx=8, pady=6)
+        ttk.Label(editor, text="Find object at").grid(row=3, column=0, sticky="nw", padx=8, pady=6)
+        search_frame = ttk.Frame(editor)
+        search_frame.grid(row=3, column=1, sticky="ew", padx=8, pady=6)
+        self.search_entries = self._build_vector_inputs(search_frame, self.search_coord_vars, ("x", "y", "z"))
+
+        ttk.Label(editor, text="Waypoints").grid(row=4, column=0, sticky="nw", padx=8, pady=6)
+        waypoint_area = ttk.Frame(editor)
+        waypoint_area.grid(row=4, column=1, sticky="nsew", padx=8, pady=6)
+        waypoint_area.columnconfigure(0, weight=1)
+        waypoint_area.rowconfigure(1, weight=1)
+        ttk.Label(
+            waypoint_area,
+            text="Double-click a cell to edit. Use the buttons to add, duplicate, remove, or reorder points.",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.waypoints_text = tk.Text(editor, height=8, wrap="none")
         self.waypoints_text.bind("<FocusOut>", lambda _event: self._refresh_waypoint_table())
         waypoint_tools = ttk.Frame(editor)
         waypoint_tools.grid(row=5, column=1, sticky="ew", padx=8, pady=(0, 6))
@@ -148,19 +159,23 @@ class ICR2Launcher(tk.Tk):
         self.move_waypoint_down_button.grid(row=0, column=3, padx=4)
 
         self.waypoint_table = ttk.Treeview(
-            editor, columns=WAYPOINT_COLUMNS, show="headings", height=6, selectmode="browse"
+            waypoint_area, columns=WAYPOINT_COLUMNS, show="headings", height=6, selectmode="browse"
         )
         for column in WAYPOINT_COLUMNS:
             self.waypoint_table.heading(column, text=column)
             self.waypoint_table.column(column, width=80, anchor="e")
-        self.waypoint_table.grid(row=6, column=1, sticky="nsew", padx=8, pady=(0, 6))
+        self.waypoint_table.grid(row=1, column=0, sticky="nsew")
         self.waypoint_table.bind("<Double-1>", self._edit_waypoint_cell)
 
-        ttk.Label(editor, text="spin_rate_deg_per_sec (JSON list)").grid(row=7, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="Spin rate (deg/sec)").grid(row=6, column=0, sticky="nw", padx=8, pady=6)
+        spin_frame = ttk.Frame(editor)
+        spin_frame.grid(row=6, column=1, sticky="ew", padx=8, pady=6)
+        self.spin_entries = self._build_vector_inputs(spin_frame, self.spin_rate_vars, ("pitch", "yaw", "roll"))
+
+        self.search_text = tk.Text(editor, height=2, wrap="none")
         self.spin_text = tk.Text(editor, height=2, wrap="none")
-        self.spin_text.grid(row=7, column=1, sticky="ew", padx=8, pady=6)
         self.apply_button = ttk.Button(editor, text="Apply object edits", command=self._apply_current_edits)
-        self.apply_button.grid(row=8, column=1, sticky="e", padx=8, pady=8)
+        self.apply_button.grid(row=7, column=1, sticky="e", padx=8, pady=8)
 
         bottom = ttk.Frame(root)
         bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -170,6 +185,18 @@ class ICR2Launcher(tk.Tk):
         self.start_button.grid(row=0, column=1, padx=4)
         self.stop_button = ttk.Button(bottom, text="Stop animation", command=self._stop_animation)
         self.stop_button.grid(row=0, column=2, padx=4)
+
+    def _build_vector_inputs(
+        self, parent: ttk.Frame, variables: list[tk.StringVar], labels: tuple[str, str, str]
+    ) -> list[ttk.Entry]:
+        entries: list[ttk.Entry] = []
+        for index, (label, variable) in enumerate(zip(labels, variables, strict=True)):
+            ttk.Label(parent, text=label).grid(row=0, column=index * 2, sticky="w", padx=(0 if index == 0 else 10, 4))
+            entry = ttk.Entry(parent, textvariable=variable, width=10)
+            entry.grid(row=0, column=index * 2 + 1, sticky="w")
+            entries.append(entry)
+        parent.columnconfigure(len(labels) * 2, weight=1)
+        return entries
 
     def _choose_and_load_config(self) -> None:
         if not self._ensure_stopped_for_edits():
@@ -234,6 +261,8 @@ class ICR2Launcher(tk.Tk):
         self.name_var.set(obj.get("name", ""))
         self.mode_var.set(obj.get("mode", "ping_pong_path"))
         self.start_delay_var.set(str(obj.get("start_delay_seconds", 0)))
+        self._set_vector_vars(self.search_coord_vars, obj.get("search_coords", []))
+        self._set_vector_vars(self.spin_rate_vars, obj.get("spin_rate_deg_per_sec", [0, 0, 0]))
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
         self._set_text(self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2))
         self._refresh_waypoint_table()
@@ -242,6 +271,24 @@ class ICR2Launcher(tk.Tk):
     def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.delete("1.0", tk.END)
         widget.insert("1.0", value)
+
+    def _set_vector_vars(self, variables: list[tk.StringVar], values: Any) -> None:
+        if not isinstance(values, list):
+            values = []
+        for index, variable in enumerate(variables):
+            variable.set(str(values[index]) if index < len(values) else "0")
+
+    def _vector_from_vars(self, variables: list[tk.StringVar], label: str) -> list[int | float]:
+        values: list[int | float] = []
+        for index, variable in enumerate(variables):
+            raw_value = variable.get().strip()
+            try:
+                number = float(raw_value)
+            except ValueError as exc:
+                axis = ("x", "y", "z")[index]
+                raise ValueError(f"{label} {axis} must be numeric.") from exc
+            values.append(int(number) if number.is_integer() else number)
+        return values
 
     def _waypoints_from_text(self) -> list[dict[str, Any]] | None:
         try:
@@ -397,19 +444,24 @@ class ICR2Launcher(tk.Tk):
             start_delay = float(self.start_delay_var.get())
             if start_delay < 0:
                 raise ValueError("start_delay_seconds must be non-negative")
+            search_coords = self._vector_from_vars(self.search_coord_vars, "find-object coordinate")
+            spin_rate = self._vector_from_vars(self.spin_rate_vars, "spin rate")
+            waypoints = json.loads(self.waypoints_text.get("1.0", "end-1c"))
             updated = {
                 "name": self.name_var.get(),
-                "search_coords": json.loads(self.search_text.get("1.0", "end-1c")),
+                "search_coords": search_coords,
                 "mode": self.mode_var.get(),
                 "start_delay_seconds": int(start_delay) if start_delay.is_integer() else start_delay,
-                "waypoints": json.loads(self.waypoints_text.get("1.0", "end-1c")),
-                "spin_rate_deg_per_sec": json.loads(self.spin_text.get("1.0", "end-1c")),
+                "waypoints": waypoints,
+                "spin_rate_deg_per_sec": spin_rate,
             }
+            self._set_text(self.search_text, json.dumps(search_coords))
+            self._set_text(self.spin_text, json.dumps(spin_rate))
         except json.JSONDecodeError as exc:
             messagebox.showerror("Invalid JSON", str(exc))
             return False
         except ValueError as exc:
-            messagebox.showerror("Invalid start delay", str(exc))
+            messagebox.showerror("Invalid numeric value", str(exc))
             return False
         self.objects[self.current_index] = updated
         self._refresh_object_list()
@@ -472,6 +524,7 @@ class ICR2Launcher(tk.Tk):
         edit_state = "disabled" if running else "normal"
         readonly_state = "disabled" if running else "readonly"
         for widget in (self.config_entry, self.fps_entry, self.name_entry, self.start_delay_entry, self.search_text, self.waypoints_text, self.spin_text,
+                       *self.search_entries, *self.spin_entries,
                        self.load_button, self.save_button, self.save_as_button, self.add_button,
                        self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
                        self.move_waypoint_up_button, self.move_waypoint_down_button, self.apply_button):
