@@ -19,9 +19,10 @@ from icr2_versions import DEFAULT_ICR2_VERSION, normalize_version
 class AnimatorService:
     """Coordinate object animation runtime state and worker threads."""
 
-    def __init__(self, version: str = DEFAULT_ICR2_VERSION, verbose: bool = True):
+    def __init__(self, version: str = DEFAULT_ICR2_VERSION, verbose: bool = True, fps: float = 60):
         self.version = normalize_version(version)
         self.verbose = verbose
+        self.fps = fps
         self.animator: ICR2ObjectAnimator | None = None
         self.threads: list[threading.Thread] = []
         self._active_objects: list[tuple[int, tuple[int, int, int, int, int, int]]] = []
@@ -47,7 +48,7 @@ class AnimatorService:
             self._stop_event.clear()
             self.threads = []
             self._active_objects = []
-            self.animator = ICR2ObjectAnimator(version=self.version, verbose=self.verbose)
+            self.animator = ICR2ObjectAnimator(version=self.version, verbose=self.verbose, fps=self.fps)
             self.animator.connect()
 
             for obj in objects:
