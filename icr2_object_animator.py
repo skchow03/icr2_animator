@@ -6,6 +6,7 @@ Features:
 - Modes:
   * "path": forward & backward through waypoints (returns to start before repeating)
   * "out_and_back": start → waypoints → return directly to start → repeat
+  * "teleport_loop": start → waypoints → teleport back to start → repeat
   * "spin": spin in place about chosen axes
 - Animations run in parallel threads
 - Coordinates: x, y, z in 1/500 inch units
@@ -215,6 +216,57 @@ class ICR2ObjectAnimator:
                     return
                 time.sleep(self.frame_time)
             current = target
+
+
+    def animate_teleport_loop(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
+                              waypoints: List[Dict[str, Any]], name: str = "Object",
+                              stop_event=None):
+        """Animate start → waypoints, then instantly reset to start and repeat."""
+        current = start
+        stop_event = stop_event or threading.Event()
+
+        while not stop_event.is_set():
+            if not self.is_alive():
+                if self.verbose:
+                    print(f"[{name}] DOSBox closed, exiting teleport-loop loop.")
+                return
+
+            for wp in waypoints:
+                target = (
+                    wp["x"], wp["y"], wp["z"],
+                    self.degrees_to_units(wp.get("rot_x", 0)),
+                    self.degrees_to_units(wp.get("rot_y", 0)),
+                    self.degrees_to_units(wp.get("rot_z", 0)),
+                )
+                dist = self.distance_in_inches(current[:3], target[:3])
+                speed_ips = self.mph_to_inches_per_sec(wp.get("speed_mph", 30))
+                duration = dist / speed_ips if speed_ips > 0 else 1.0
+                total_frames = max(1, int(duration * self.fps))
+
+                for f in range(total_frames + 1):
+                    if stop_event.is_set():
+                        return
+                    if not self.is_alive():
+                        return
+                    progress = f / total_frames
+                    interp = tuple(int(current[i] + (target[i] - current[i]) * progress)
+                                   for i in range(6))
+                    try:
+                        self.write_object6(rel_addr, interp)
+                    except SystemExit:
+                        return
+                    time.sleep(self.frame_time)
+                current = target
+
+            if stop_event.is_set():
+                return
+            if not self.is_alive():
+                return
+            try:
+                self.write_object6(rel_addr, start)
+            except SystemExit:
+                return
+            current = start
 
     def animate_spin(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
                      spin_rate: Tuple[float, float, float], name: str = "Object",
