@@ -17,6 +17,7 @@ All memory addresses are relative to exe_base (as in Ghidra/notes).
 import time
 import math
 import struct
+import threading
 from typing import Tuple, List, Dict, Any, Optional
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_version
 
@@ -103,12 +104,9 @@ class ICR2ObjectAnimator:
         }
         full_wp = [start_wp] + waypoints
         current = start
+        stop_event = stop_event or threading.Event()
 
-        while True:
-            if stop_event and stop_event.is_set():
-                if self.verbose:
-                    print(f"[{name}] Stop requested, exiting path loop.")
-                return
+        while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting path loop.")
@@ -127,7 +125,7 @@ class ICR2ObjectAnimator:
                 total_frames = max(1, int(duration * self.fps))
 
                 for f in range(total_frames + 1):
-                    if stop_event and stop_event.is_set():
+                    if stop_event.is_set():
                         return
                     if not self.is_alive():
                         return
@@ -155,12 +153,9 @@ class ICR2ObjectAnimator:
             "speed_mph": waypoints[0].get("speed_mph", 30) if waypoints else 30
         }
         current = start
+        stop_event = stop_event or threading.Event()
 
-        while True:
-            if stop_event and stop_event.is_set():
-                if self.verbose:
-                    print(f"[{name}] Stop requested, exiting out-and-back loop.")
-                return
+        while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting out-and-back loop.")
@@ -180,7 +175,7 @@ class ICR2ObjectAnimator:
                 total_frames = max(1, int(duration * self.fps))
 
                 for f in range(total_frames + 1):
-                    if stop_event and stop_event.is_set():
+                    if stop_event.is_set():
                         return
                     if not self.is_alive():
                         return
@@ -207,7 +202,7 @@ class ICR2ObjectAnimator:
             total_frames = max(1, int(duration * self.fps))
 
             for f in range(total_frames + 1):
-                if stop_event and stop_event.is_set():
+                if stop_event.is_set():
                     return
                 if not self.is_alive():
                     return
@@ -227,11 +222,9 @@ class ICR2ObjectAnimator:
         """Spin object in place forever."""
         pos = start[:3]
         rot = [self.units_to_degrees(r) for r in start[3:]]
-        while True:
-            if stop_event and stop_event.is_set():
-                if self.verbose:
-                    print(f"[{name}] Stop requested, exiting spin loop.")
-                return
+        stop_event = stop_event or threading.Event()
+
+        while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting spin loop.")
@@ -239,6 +232,8 @@ class ICR2ObjectAnimator:
             for i in range(3):
                 rot[i] += spin_rate[i] / self.fps
                 rot[i] = ((rot[i] + 180) % 360) - 180
+            if stop_event.is_set():
+                return
             rot_units = [self.degrees_to_units(r) for r in rot]
             try:
                 self.write_object6(rel_addr, (*pos, *rot_units))
