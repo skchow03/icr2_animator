@@ -104,17 +104,17 @@ class AnimatorService:
         mode = obj["mode"]
         self._active_objects.append((rel_addr, start_vals))
 
-        if mode == "path":
-            target = self.animator.animate_path
+        if mode == "ping_pong_path":
+            target = self.animator.animate_ping_pong_path
             args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
-        elif mode == "out_and_back":
-            target = self.animator.animate_out_and_back
+        elif mode == "return_to_start":
+            target = self.animator.animate_return_to_start
             args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
-        elif mode == "teleport_loop":
-            target = self.animator.animate_teleport_loop
+        elif mode == "reset_loop":
+            target = self.animator.animate_reset_loop
             args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
-        elif mode == "spin":
-            target = self.animator.animate_spin
+        elif mode == "rotate_in_place":
+            target = self.animator.animate_rotate_in_place
             args = (
                 rel_addr,
                 start_vals,

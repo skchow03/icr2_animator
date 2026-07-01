@@ -38,7 +38,7 @@ DEFAULT_WAYPOINT = {"x": 0, "y": 0, "z": 0, "speed_mph": 60, "rot_x": 0, "rot_y"
 DEFAULT_OBJECT: dict[str, Any] = {
     "name": "new_object",
     "search_coords": [0, 0, 0],
-    "mode": "path",
+    "mode": "ping_pong_path",
     "start_delay_seconds": 0,
     "waypoints": [
         {"x": 0, "y": 0, "z": 0, "speed_mph": 30, "rot_x": 0, "rot_y": 0, "rot_z": 0}
@@ -65,7 +65,7 @@ class ICR2Launcher(tk.Tk):
         self.config_path_var = tk.StringVar(value="objects.json")
         self.fps_var = tk.StringVar(value="60")
         self.name_var = tk.StringVar()
-        self.mode_var = tk.StringVar(value="path")
+        self.mode_var = tk.StringVar(value="ping_pong_path")
         self.start_delay_var = tk.StringVar(value="0")
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
 
@@ -232,7 +232,7 @@ class ICR2Launcher(tk.Tk):
     def _populate_editor(self) -> None:
         obj = self.objects[self.current_index] if self.current_index is not None and self.objects else DEFAULT_OBJECT
         self.name_var.set(obj.get("name", ""))
-        self.mode_var.set(obj.get("mode", "path"))
+        self.mode_var.set(obj.get("mode", "ping_pong_path"))
         self.start_delay_var.set(str(obj.get("start_delay_seconds", 0)))
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
         self._set_text(self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2))

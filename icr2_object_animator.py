@@ -4,10 +4,10 @@ icr2_object_animator.py - Animate 3D objects in ICR2 by manipulating memory coor
 Features:
 - Multiple objects configured in objects.json
 - Modes:
-  * "path": forward & backward through waypoints (returns to start before repeating)
-  * "out_and_back": start → waypoints → return directly to start → repeat
-  * "teleport_loop": start → waypoints → teleport back to start → repeat
-  * "spin": spin in place about chosen axes
+  * "ping_pong_path": forward & backward through waypoints (returns to start before repeating)
+  * "return_to_start": start → waypoints → return directly to start → repeat
+  * "reset_loop": start → waypoints → snap back to start → repeat
+  * "rotate_in_place": rotate in place about chosen axes
 - Animations run in parallel threads
 - Coordinates: x, y, z in 1/500 inch units
 - Rotations: int32 wraparound covering 360 degrees, three axes (rotX, rotY, rotZ)
@@ -102,7 +102,7 @@ class ICR2ObjectAnimator:
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     # ---------------- Modes ----------------
-    def animate_path(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
+    def animate_ping_pong_path(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
                      waypoints: List[Dict[str, Any]], name: str = "Object",
                      stop_event=None):
         """Move object back and forth along waypoints, returning to original start."""
@@ -120,7 +120,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting path loop.")
+                    print(f"[{name}] DOSBox closed, exiting ping-pong path loop.")
                 return
             seq = full_wp + full_wp[-2:0:-1]  # forward + backward
             for wp in seq:
@@ -152,7 +152,7 @@ class ICR2ObjectAnimator:
                     time.sleep(self.frame_time)
                 current = target
 
-    def animate_out_and_back(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
+    def animate_return_to_start(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
                              waypoints: List[Dict[str, Any]], name: str = "Object",
                              stop_event=None):
         """Animate: start → waypoints → return directly to start → repeat."""
@@ -228,7 +228,7 @@ class ICR2ObjectAnimator:
             current = target
 
 
-    def animate_teleport_loop(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
+    def animate_reset_loop(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
                               waypoints: List[Dict[str, Any]], name: str = "Object",
                               stop_event=None):
         """Animate start → waypoints, then instantly reset to start and repeat."""
@@ -238,7 +238,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting teleport-loop loop.")
+                    print(f"[{name}] DOSBox closed, exiting reset-loop loop.")
                 return
 
             for wp in waypoints:
@@ -278,10 +278,10 @@ class ICR2ObjectAnimator:
                 return
             current = start
 
-    def animate_spin(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
+    def animate_rotate_in_place(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
                      spin_rate: Tuple[float, float, float], name: str = "Object",
                      stop_event=None):
-        """Spin object in place forever."""
+        """Rotate object in place forever."""
         pos = start[:3]
         rot = [self.units_to_degrees(r) for r in start[3:]]
         stop_event = stop_event or threading.Event()
@@ -289,7 +289,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting spin loop.")
+                    print(f"[{name}] DOSBox closed, exiting rotate-in-place loop.")
                 return
             for i in range(3):
                 rot[i] += spin_rate[i] / self.fps
