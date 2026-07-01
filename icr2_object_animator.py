@@ -291,6 +291,7 @@ def main(argv=None):
     import argparse
 
     from animator_service import AnimatorService
+    from config_validation import validate_object_config
 
     parser = argparse.ArgumentParser(description="Animate configured ICR2 objects in DOSBox.")
     parser.add_argument(
@@ -309,6 +310,9 @@ def main(argv=None):
     service = AnimatorService(version=args.version, verbose=True)
     try:
         objects = service.load_objects(args.config)
+        validation_errors = validate_object_config(objects)
+        if validation_errors:
+            raise ValueError("Config validation failed:\n" + "\n".join(f"- {error}" for error in validation_errors))
         service.start(objects)
         service.wait()
     except KeyboardInterrupt:
