@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from animator_service import AnimatorService
+from config_validation import validate_object_config
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
 
 
@@ -83,6 +84,15 @@ class AnimatorLauncher(tk.Tk):
             objects = self.service.load_objects(config_path)
         except Exception as exc:
             messagebox.showerror("Config error", str(exc))
+            self.service = None
+            self._update_start_state()
+            return
+
+        validation_errors = validate_object_config(objects)
+        if validation_errors:
+            error_text = "\n".join(f"• {error}" for error in validation_errors)
+            self.status_var.set("Config validation failed; animations were not started.")
+            messagebox.showerror("Config validation error", error_text)
             self.service = None
             self._update_start_state()
             return
