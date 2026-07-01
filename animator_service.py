@@ -126,9 +126,23 @@ class AnimatorService:
             print(f"[Animator] Unknown mode {mode} for {obj['name']}")
             return
 
-        thread = threading.Thread(target=target, args=args, daemon=True)
+        start_delay_seconds = float(obj.get("start_delay_seconds", 0) or 0)
+        thread = threading.Thread(
+            target=self._run_after_start_delay,
+            args=(start_delay_seconds, target, args, obj["name"]),
+            daemon=True,
+        )
         thread.start()
         self.threads.append(thread)
+
+    def _run_after_start_delay(self, delay_seconds: float, target, args: tuple, name: str) -> None:
+        """Wait for an object's configured start delay, then run its animation loop."""
+        if delay_seconds > 0:
+            if self.verbose:
+                print(f"[Animator] Waiting {delay_seconds:g}s before starting {name}.")
+            if self._stop_event.wait(delay_seconds):
+                return
+        target(*args)
 
     def _reset_active_objects(self) -> None:
         """Restore every discovered object to the coordinates captured at start()."""

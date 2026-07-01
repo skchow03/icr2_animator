@@ -11,7 +11,9 @@ Run this primary launcher with::
 Object fields that are lists (``search_coords``, ``waypoints``, and
 ``spin_rate_deg_per_sec``) can still be edited as JSON snippets so current
 config files can be loaded and saved without format migration. Waypoints also
-have a table editor for common add/remove/reorder/cell-edit operations.
+have a table editor for common add/remove/reorder/cell-edit operations. Each
+object can also define ``start_delay_seconds`` to delay its animation after the
+user clicks Start animation.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ DEFAULT_OBJECT: dict[str, Any] = {
     "name": "new_object",
     "search_coords": [0, 0, 0],
     "mode": "path",
+    "start_delay_seconds": 0,
     "waypoints": [
         {"x": 0, "y": 0, "z": 0, "speed_mph": 30, "rot_x": 0, "rot_y": 0, "rot_z": 0}
     ],
@@ -63,6 +66,7 @@ class ICR2Launcher(tk.Tk):
         self.fps_var = tk.StringVar(value="60")
         self.name_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="path")
+        self.start_delay_var = tk.StringVar(value="0")
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
 
         self._build_widgets()
@@ -114,7 +118,7 @@ class ICR2Launcher(tk.Tk):
         editor = ttk.LabelFrame(root, text="Object")
         editor.grid(row=1, column=1, sticky="nsew")
         editor.columnconfigure(1, weight=1)
-        editor.rowconfigure(3, weight=1)
+        editor.rowconfigure(4, weight=1)
 
         ttk.Label(editor, text="name").grid(row=0, column=0, sticky="nw", padx=8, pady=6)
         self.name_entry = ttk.Entry(editor, textvariable=self.name_var)
@@ -122,15 +126,18 @@ class ICR2Launcher(tk.Tk):
         ttk.Label(editor, text="mode").grid(row=1, column=0, sticky="nw", padx=8, pady=6)
         self.mode_combo = ttk.Combobox(editor, textvariable=self.mode_var, values=sorted(VALID_MODES), state="readonly")
         self.mode_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="search_coords (JSON list)").grid(row=2, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="start_delay_seconds").grid(row=2, column=0, sticky="nw", padx=8, pady=6)
+        self.start_delay_entry = ttk.Entry(editor, textvariable=self.start_delay_var)
+        self.start_delay_entry.grid(row=2, column=1, sticky="ew", padx=8, pady=6)
+        ttk.Label(editor, text="search_coords (JSON list)").grid(row=3, column=0, sticky="nw", padx=8, pady=6)
         self.search_text = tk.Text(editor, height=2, wrap="none")
-        self.search_text.grid(row=2, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Label(editor, text="waypoints (JSON list)").grid(row=3, column=0, sticky="nw", padx=8, pady=6)
+        self.search_text.grid(row=3, column=1, sticky="ew", padx=8, pady=6)
+        ttk.Label(editor, text="waypoints (JSON list)").grid(row=4, column=0, sticky="nw", padx=8, pady=6)
         self.waypoints_text = tk.Text(editor, height=12, wrap="none")
-        self.waypoints_text.grid(row=3, column=1, sticky="nsew", padx=8, pady=6)
+        self.waypoints_text.grid(row=4, column=1, sticky="nsew", padx=8, pady=6)
         self.waypoints_text.bind("<FocusOut>", lambda _event: self._refresh_waypoint_table())
         waypoint_tools = ttk.Frame(editor)
-        waypoint_tools.grid(row=4, column=1, sticky="ew", padx=8, pady=(0, 6))
+        waypoint_tools.grid(row=5, column=1, sticky="ew", padx=8, pady=(0, 6))
         self.add_waypoint_button = ttk.Button(waypoint_tools, text="Add waypoint", command=self._add_waypoint)
         self.add_waypoint_button.grid(row=0, column=0, padx=(0, 4))
         self.remove_waypoint_button = ttk.Button(waypoint_tools, text="Remove waypoint", command=self._remove_waypoint)
@@ -146,14 +153,14 @@ class ICR2Launcher(tk.Tk):
         for column in WAYPOINT_COLUMNS:
             self.waypoint_table.heading(column, text=column)
             self.waypoint_table.column(column, width=80, anchor="e")
-        self.waypoint_table.grid(row=5, column=1, sticky="nsew", padx=8, pady=(0, 6))
+        self.waypoint_table.grid(row=6, column=1, sticky="nsew", padx=8, pady=(0, 6))
         self.waypoint_table.bind("<Double-1>", self._edit_waypoint_cell)
 
-        ttk.Label(editor, text="spin_rate_deg_per_sec (JSON list)").grid(row=6, column=0, sticky="nw", padx=8, pady=6)
+        ttk.Label(editor, text="spin_rate_deg_per_sec (JSON list)").grid(row=7, column=0, sticky="nw", padx=8, pady=6)
         self.spin_text = tk.Text(editor, height=2, wrap="none")
-        self.spin_text.grid(row=6, column=1, sticky="ew", padx=8, pady=6)
+        self.spin_text.grid(row=7, column=1, sticky="ew", padx=8, pady=6)
         self.apply_button = ttk.Button(editor, text="Apply object edits", command=self._apply_current_edits)
-        self.apply_button.grid(row=7, column=1, sticky="e", padx=8, pady=8)
+        self.apply_button.grid(row=8, column=1, sticky="e", padx=8, pady=8)
 
         bottom = ttk.Frame(root)
         bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -226,6 +233,7 @@ class ICR2Launcher(tk.Tk):
         obj = self.objects[self.current_index] if self.current_index is not None and self.objects else DEFAULT_OBJECT
         self.name_var.set(obj.get("name", ""))
         self.mode_var.set(obj.get("mode", "path"))
+        self.start_delay_var.set(str(obj.get("start_delay_seconds", 0)))
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
         self._set_text(self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2))
         self._refresh_waypoint_table()
@@ -386,15 +394,22 @@ class ICR2Launcher(tk.Tk):
         if self.current_index is None:
             return True
         try:
+            start_delay = float(self.start_delay_var.get())
+            if start_delay < 0:
+                raise ValueError("start_delay_seconds must be non-negative")
             updated = {
                 "name": self.name_var.get(),
                 "search_coords": json.loads(self.search_text.get("1.0", "end-1c")),
                 "mode": self.mode_var.get(),
+                "start_delay_seconds": int(start_delay) if start_delay.is_integer() else start_delay,
                 "waypoints": json.loads(self.waypoints_text.get("1.0", "end-1c")),
                 "spin_rate_deg_per_sec": json.loads(self.spin_text.get("1.0", "end-1c")),
             }
         except json.JSONDecodeError as exc:
             messagebox.showerror("Invalid JSON", str(exc))
+            return False
+        except ValueError as exc:
+            messagebox.showerror("Invalid start delay", str(exc))
             return False
         self.objects[self.current_index] = updated
         self._refresh_object_list()
@@ -456,7 +471,7 @@ class ICR2Launcher(tk.Tk):
         self.is_animating = running
         edit_state = "disabled" if running else "normal"
         readonly_state = "disabled" if running else "readonly"
-        for widget in (self.config_entry, self.fps_entry, self.name_entry, self.search_text, self.waypoints_text, self.spin_text,
+        for widget in (self.config_entry, self.fps_entry, self.name_entry, self.start_delay_entry, self.search_text, self.waypoints_text, self.spin_text,
                        self.load_button, self.save_button, self.save_as_button, self.add_button,
                        self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
                        self.move_waypoint_up_button, self.move_waypoint_down_button, self.apply_button):

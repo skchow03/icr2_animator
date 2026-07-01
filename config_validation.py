@@ -43,6 +43,11 @@ def validate_object_config(objects: list[dict]) -> list[str]:
                     errors.append(f"{label} search_coords[{coord_index}] must be an integer")
 
         mode = obj.get("mode")
+        if "start_delay_seconds" in obj:
+            delay = obj["start_delay_seconds"]
+            if not _is_numeric(delay) or delay < 0:
+                errors.append(f"{label} start_delay_seconds must be a non-negative number")
+
         if mode not in VALID_MODES:
             errors.append(f"{label} mode must be one of {sorted(VALID_MODES)}")
             continue
