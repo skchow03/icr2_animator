@@ -26,12 +26,22 @@ from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_v
 class ICR2ObjectAnimator:
     UNITS_PER_DEGREE = 4294967296 / 360.0  # 4-byte signed int covers 360°
 
-    def __init__(self, version=DEFAULT_ICR2_VERSION, verbose=True):
+    def __init__(self, version=DEFAULT_ICR2_VERSION, verbose=True, fps: float = 60):
         self.memory = None
         self.version = normalize_version(version)
         self.verbose = verbose
-        self.fps = 30
+        self.fps = self._validate_fps(fps)
         self.frame_time = 1.0 / self.fps
+
+    def _validate_fps(self, fps: float) -> float:
+        """Return a positive animation frame rate or raise ValueError."""
+        try:
+            fps_value = float(fps)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fps must be a positive number") from exc
+        if fps_value <= 0:
+            raise ValueError("fps must be a positive number")
+        return fps_value
 
     # ---------------- Connection ----------------
     def connect(self):
@@ -137,7 +147,7 @@ class ICR2ObjectAnimator:
                         self.write_object6(rel_addr, interp)
                     except SystemExit:
                         return
-                    if self.verbose and f % (self.fps // 2) == 0:
+                    if self.verbose and f % max(1, int(self.fps // 2)) == 0:
                         print(f"[{name}] Frame {f}/{total_frames} at {interp}")
                     time.sleep(self.frame_time)
                 current = target
@@ -352,9 +362,15 @@ def main(argv=None):
         default="objects.json",
         help="Path to the object animation JSON configuration file.",
     )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=60,
+        help="Animation frames per second (default: 60).",
+    )
     args = parser.parse_args(argv)
 
-    service = AnimatorService(version=args.version, verbose=True)
+    service = AnimatorService(version=args.version, verbose=True, fps=args.fps)
     try:
         objects = service.load_objects(args.config)
         validation_errors = validate_object_config(objects)

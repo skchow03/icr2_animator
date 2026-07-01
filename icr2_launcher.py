@@ -60,6 +60,7 @@ class ICR2Launcher(tk.Tk):
 
         self.version_var = tk.StringVar(value=DEFAULT_ICR2_VERSION)
         self.config_path_var = tk.StringVar(value="objects.json")
+        self.fps_var = tk.StringVar(value="60")
         self.name_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="path")
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
@@ -95,6 +96,9 @@ class ICR2Launcher(tk.Tk):
         self.save_button.grid(row=0, column=5, padx=3)
         self.save_as_button = ttk.Button(top, text="Save As...", command=self._save_config_as)
         self.save_as_button.grid(row=0, column=6, padx=3)
+        ttk.Label(top, text="FPS").grid(row=0, column=7, padx=(14, 6))
+        self.fps_entry = ttk.Entry(top, textvariable=self.fps_var, width=8)
+        self.fps_entry.grid(row=0, column=8, padx=3)
 
         left = ttk.Frame(root)
         left.grid(row=1, column=0, sticky="ns", padx=(0, 10))
@@ -419,7 +423,14 @@ class ICR2Launcher(tk.Tk):
         if errors:
             messagebox.showerror("Config validation error", "\n".join(f"• {error}" for error in errors))
             return
-        self.service = AnimatorService(version=self.version_var.get(), verbose=True)
+        try:
+            fps = float(self.fps_var.get())
+            if fps <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid FPS", "FPS must be a positive number.")
+            return
+        self.service = AnimatorService(version=self.version_var.get(), verbose=True, fps=fps)
         self.status_var.set("Starting animation...")
         self._set_running_state(True)
         self.worker = threading.Thread(target=self._run_service, args=(list(self.objects),), daemon=True)
@@ -445,7 +456,7 @@ class ICR2Launcher(tk.Tk):
         self.is_animating = running
         edit_state = "disabled" if running else "normal"
         readonly_state = "disabled" if running else "readonly"
-        for widget in (self.config_entry, self.name_entry, self.search_text, self.waypoints_text, self.spin_text,
+        for widget in (self.config_entry, self.fps_entry, self.name_entry, self.search_text, self.waypoints_text, self.spin_text,
                        self.load_button, self.save_button, self.save_as_button, self.add_button,
                        self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
                        self.move_waypoint_up_button, self.move_waypoint_down_button, self.apply_button):
