@@ -28,6 +28,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, TextIO
 
 from animator_service import AnimatorService
+from icr2_logging import log_error, log_info
 from config_validation import VALID_MODES, validate_object_config
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
 
@@ -734,15 +735,20 @@ class ICR2Launcher(tk.Tk):
             return
         errors = validate_object_config(self.objects)
         if errors:
+            for error in errors:
+                log_error("Main", f"Config validation failed: {error}")
             messagebox.showerror("Config validation error", "\n".join(f"• {error}" for error in errors))
             return
+        log_info("Main", f"Config validation passed for {len(self.objects)} object(s).")
         try:
             fps = float(self.fps_var.get())
             if fps <= 0:
                 raise ValueError
         except ValueError:
+            log_error("Main", f"Invalid FPS value: {self.fps_var.get()!r}.")
             messagebox.showerror("Invalid FPS", "FPS must be a positive number.")
             return
+        log_info("Main", f"Starting animation from config={self.config_path_var.get()!r}, version={self.version_var.get()}, fps={fps:g}, objects={len(self.objects)}.")
         self.service = AnimatorService(version=self.version_var.get(), verbose=True, fps=fps)
         self.status_var.set("Starting animation...")
         self._set_running_state(True)
@@ -755,12 +761,14 @@ class ICR2Launcher(tk.Tk):
                 self.service.start(objects)
                 self.service.wait()
         except Exception as exc:
+            log_error("Main", f"Animator error: {exc}")
             self.after(0, lambda: messagebox.showerror("Animator error", str(exc)))
         finally:
             self.after(0, lambda: self._set_running_state(False))
 
     def _stop_animation(self) -> None:
         self.status_var.set("Stopping animation...")
+        log_info("Main", "Stop animation requested from launcher.")
         if self.service:
             self.service.stop()
         self._set_running_state(False)
