@@ -24,6 +24,7 @@ class AnimatorService:
         self.verbose = verbose
         self.animator: ICR2ObjectAnimator | None = None
         self.threads: list[threading.Thread] = []
+        self._active_objects: list[tuple[int, tuple[int, int, int, int, int, int]]] = []
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
@@ -45,6 +46,7 @@ class AnimatorService:
                 raise RuntimeError("AnimatorService is already running")
             self._stop_event.clear()
             self.threads = []
+            self._active_objects = []
             self.animator = ICR2ObjectAnimator(version=self.version, verbose=self.verbose)
             self.animator.connect()
 
@@ -58,11 +60,14 @@ class AnimatorService:
         for thread in list(self.threads):
             thread.join(timeout=2)
 
+        self._reset_active_objects()
+
         if self.animator:
             self.animator.disconnect()
             self.animator = None
 
         self.threads = []
+        self._active_objects = []
 
     def is_running(self) -> bool:
         """Return True while at least one tracked animation thread is alive."""
@@ -96,12 +101,16 @@ class AnimatorService:
 
         start_vals = self.animator.read_object6(rel_addr)
         mode = obj["mode"]
+        self._active_objects.append((rel_addr, start_vals))
 
         if mode == "path":
             target = self.animator.animate_path
             args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
         elif mode == "out_and_back":
             target = self.animator.animate_out_and_back
+            args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
+        elif mode == "teleport_loop":
+            target = self.animator.animate_teleport_loop
             args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
         elif mode == "spin":
             target = self.animator.animate_spin
@@ -119,3 +128,15 @@ class AnimatorService:
         thread = threading.Thread(target=target, args=args, daemon=True)
         thread.start()
         self.threads.append(thread)
+
+    def _reset_active_objects(self) -> None:
+        """Restore every discovered object to the coordinates captured at start()."""
+        animator = self.animator
+        if not animator or not animator.is_alive():
+            return
+
+        for rel_addr, start_vals in self._active_objects:
+            try:
+                animator.write_object6(rel_addr, start_vals)
+            except SystemExit:
+                return
