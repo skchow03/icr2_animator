@@ -4,13 +4,19 @@ The launcher keeps the existing ``objects.json`` shape::
 
     {"objects": [ ... ]}
 
+Run this primary launcher with::
+
+    python icr2_launcher.py
+
 Object fields that are lists (``search_coords``, ``waypoints``, and
-``spin_rate_deg_per_sec``) are edited as JSON snippets so current config files
-can be loaded and saved without format migration.
+``spin_rate_deg_per_sec``) can still be edited as JSON snippets so current
+config files can be loaded and saved without format migration. Waypoints also
+have a table editor for common add/remove/reorder/cell-edit operations.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 import tkinter as tk
@@ -21,6 +27,10 @@ from typing import Any
 from animator_service import AnimatorService
 from config_validation import VALID_MODES, validate_object_config
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
+
+
+WAYPOINT_COLUMNS = ("x", "y", "z", "speed_mph", "rot_x", "rot_y", "rot_z")
+DEFAULT_WAYPOINT = {"x": 0, "y": 0, "z": 0, "speed_mph": 60, "rot_x": 0, "rot_y": 0, "rot_z": 0}
 
 
 DEFAULT_OBJECT: dict[str, Any] = {
@@ -114,11 +124,32 @@ class ICR2Launcher(tk.Tk):
         ttk.Label(editor, text="waypoints (JSON list)").grid(row=3, column=0, sticky="nw", padx=8, pady=6)
         self.waypoints_text = tk.Text(editor, height=12, wrap="none")
         self.waypoints_text.grid(row=3, column=1, sticky="nsew", padx=8, pady=6)
-        ttk.Label(editor, text="spin_rate_deg_per_sec (JSON list)").grid(row=4, column=0, sticky="nw", padx=8, pady=6)
+        self.waypoints_text.bind("<FocusOut>", lambda _event: self._refresh_waypoint_table())
+        waypoint_tools = ttk.Frame(editor)
+        waypoint_tools.grid(row=4, column=1, sticky="ew", padx=8, pady=(0, 6))
+        self.add_waypoint_button = ttk.Button(waypoint_tools, text="Add waypoint", command=self._add_waypoint)
+        self.add_waypoint_button.grid(row=0, column=0, padx=(0, 4))
+        self.remove_waypoint_button = ttk.Button(waypoint_tools, text="Remove waypoint", command=self._remove_waypoint)
+        self.remove_waypoint_button.grid(row=0, column=1, padx=4)
+        self.move_waypoint_up_button = ttk.Button(waypoint_tools, text="Move up", command=lambda: self._move_waypoint(-1))
+        self.move_waypoint_up_button.grid(row=0, column=2, padx=4)
+        self.move_waypoint_down_button = ttk.Button(waypoint_tools, text="Move down", command=lambda: self._move_waypoint(1))
+        self.move_waypoint_down_button.grid(row=0, column=3, padx=4)
+
+        self.waypoint_table = ttk.Treeview(
+            editor, columns=WAYPOINT_COLUMNS, show="headings", height=6, selectmode="browse"
+        )
+        for column in WAYPOINT_COLUMNS:
+            self.waypoint_table.heading(column, text=column)
+            self.waypoint_table.column(column, width=80, anchor="e")
+        self.waypoint_table.grid(row=5, column=1, sticky="nsew", padx=8, pady=(0, 6))
+        self.waypoint_table.bind("<Double-1>", self._edit_waypoint_cell)
+
+        ttk.Label(editor, text="spin_rate_deg_per_sec (JSON list)").grid(row=6, column=0, sticky="nw", padx=8, pady=6)
         self.spin_text = tk.Text(editor, height=2, wrap="none")
-        self.spin_text.grid(row=4, column=1, sticky="ew", padx=8, pady=6)
+        self.spin_text.grid(row=6, column=1, sticky="ew", padx=8, pady=6)
         self.apply_button = ttk.Button(editor, text="Apply object edits", command=self._apply_current_edits)
-        self.apply_button.grid(row=5, column=1, sticky="e", padx=8, pady=8)
+        self.apply_button.grid(row=7, column=1, sticky="e", padx=8, pady=8)
 
         bottom = ttk.Frame(root)
         bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -193,11 +224,156 @@ class ICR2Launcher(tk.Tk):
         self.mode_var.set(obj.get("mode", "path"))
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
         self._set_text(self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2))
+        self._refresh_waypoint_table()
         self._set_text(self.spin_text, json.dumps(obj.get("spin_rate_deg_per_sec", [0, 0, 0])))
 
     def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.delete("1.0", tk.END)
         widget.insert("1.0", value)
+
+    def _waypoints_from_text(self) -> list[dict[str, Any]] | None:
+        try:
+            waypoints = json.loads(self.waypoints_text.get("1.0", "end-1c"))
+        except json.JSONDecodeError as exc:
+            messagebox.showerror("Invalid waypoint JSON", str(exc))
+            return None
+        if not isinstance(waypoints, list):
+            messagebox.showerror("Invalid waypoint JSON", "waypoints must be a JSON list.")
+            return None
+        return waypoints
+
+    def _write_waypoints_to_text(self, waypoints: list[dict[str, Any]], selected_index: int | None = None) -> None:
+        self._set_text(self.waypoints_text, json.dumps(waypoints, indent=2))
+        self._refresh_waypoint_table(selected_index)
+
+    def _selected_waypoint_index(self) -> int | None:
+        selected = self.waypoint_table.selection()
+        if not selected:
+            return None
+        return self.waypoint_table.index(selected[0])
+
+    def _refresh_waypoint_table(self, selected_index: int | None = None) -> None:
+        for item in self.waypoint_table.get_children():
+            self.waypoint_table.delete(item)
+        try:
+            waypoints = json.loads(self.waypoints_text.get("1.0", "end-1c") or "[]")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(waypoints, list):
+            return
+        for waypoint in waypoints:
+            if isinstance(waypoint, dict):
+                values = [waypoint.get(column, "") for column in WAYPOINT_COLUMNS]
+            else:
+                values = [""] * len(WAYPOINT_COLUMNS)
+            self.waypoint_table.insert("", "end", values=values)
+        children = self.waypoint_table.get_children()
+        if selected_index is not None and children:
+            selected_index = max(0, min(selected_index, len(children) - 1))
+            self.waypoint_table.selection_set(children[selected_index])
+            self.waypoint_table.focus(children[selected_index])
+
+    def _edit_waypoint_cell(self, event: tk.Event) -> None:
+        if self.is_animating:
+            return
+        item = self.waypoint_table.identify_row(event.y)
+        column_id = self.waypoint_table.identify_column(event.x)
+        if not item or not column_id:
+            return
+        column_index = int(column_id.removeprefix("#")) - 1
+        if column_index < 0 or column_index >= len(WAYPOINT_COLUMNS):
+            return
+        bbox = self.waypoint_table.bbox(item, column_id)
+        if not bbox:
+            return
+        x, y, width, height = bbox
+        column = WAYPOINT_COLUMNS[column_index]
+        editor = ttk.Entry(self.waypoint_table)
+        editor.insert(0, self.waypoint_table.set(item, column))
+        editor.select_range(0, tk.END)
+        editor.focus_set()
+        editor.place(x=x, y=y, width=width, height=height)
+
+        committed = False
+
+        def commit(_event: tk.Event | None = None) -> None:
+            nonlocal committed
+            if committed:
+                return
+            committed = True
+            self._set_waypoint_value(self.waypoint_table.index(item), column, editor.get())
+            editor.destroy()
+
+        def cancel(_event: tk.Event | None = None) -> None:
+            nonlocal committed
+            committed = True
+            editor.destroy()
+
+        editor.bind("<Return>", commit)
+        editor.bind("<FocusOut>", commit)
+        editor.bind("<Escape>", cancel)
+
+    def _set_waypoint_value(self, index: int, column: str, value: str) -> None:
+        waypoints = self._waypoints_from_text()
+        if waypoints is None or index >= len(waypoints):
+            return
+        if not isinstance(waypoints[index], dict):
+            waypoints[index] = {}
+        stripped = value.strip()
+        if stripped == "" and column not in {"x", "y", "z"}:
+            waypoints[index].pop(column, None)
+        else:
+            try:
+                number = float(stripped)
+            except ValueError:
+                messagebox.showerror("Invalid value", f"{column} must be numeric.")
+                return
+            waypoints[index][column] = int(number) if number.is_integer() else number
+        self._write_waypoints_to_text(waypoints, index)
+
+    def _add_waypoint(self) -> None:
+        if not self._ensure_stopped_for_edits():
+            return
+        waypoints = self._waypoints_from_text()
+        if waypoints is None:
+            return
+        insert_at = self._selected_waypoint_index()
+        source = (
+            waypoints[insert_at]
+            if insert_at is not None and waypoints and isinstance(waypoints[insert_at], dict)
+            else DEFAULT_WAYPOINT
+        )
+        new_waypoint = copy.deepcopy(source)
+        if insert_at is None:
+            waypoints.append(new_waypoint)
+            insert_at = len(waypoints) - 1
+        else:
+            insert_at += 1
+            waypoints.insert(insert_at, new_waypoint)
+        self._write_waypoints_to_text(waypoints, insert_at)
+
+    def _remove_waypoint(self) -> None:
+        if not self._ensure_stopped_for_edits():
+            return
+        waypoints = self._waypoints_from_text()
+        index = self._selected_waypoint_index()
+        if waypoints is None or index is None or index >= len(waypoints):
+            return
+        del waypoints[index]
+        self._write_waypoints_to_text(waypoints, index)
+
+    def _move_waypoint(self, direction: int) -> None:
+        if not self._ensure_stopped_for_edits():
+            return
+        waypoints = self._waypoints_from_text()
+        index = self._selected_waypoint_index()
+        if waypoints is None or index is None:
+            return
+        new_index = index + direction
+        if not 0 <= new_index < len(waypoints):
+            return
+        waypoints[index], waypoints[new_index] = waypoints[new_index], waypoints[index]
+        self._write_waypoints_to_text(waypoints, new_index)
 
     def _apply_current_edits(self) -> bool:
         if self.is_animating:
@@ -271,11 +447,13 @@ class ICR2Launcher(tk.Tk):
         readonly_state = "disabled" if running else "readonly"
         for widget in (self.config_entry, self.name_entry, self.search_text, self.waypoints_text, self.spin_text,
                        self.load_button, self.save_button, self.save_as_button, self.add_button,
-                       self.remove_button, self.apply_button):
+                       self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
+                       self.move_waypoint_up_button, self.move_waypoint_down_button, self.apply_button):
             widget.configure(state=edit_state)
         self.version_combo.configure(state=readonly_state)
         self.mode_combo.configure(state=readonly_state)
         self.object_list.configure(state=edit_state)
+        self.waypoint_table.state(["disabled"] if running else ["!disabled"])
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
         if not running:
