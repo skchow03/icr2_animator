@@ -5,7 +5,7 @@ from __future__ import annotations
 from numbers import Real
 from typing import Any
 
-VALID_MODES = {"path", "out_and_back", "teleport_loop", "spin"}
+VALID_MODES = {"ping_pong_path", "return_to_start", "reset_loop", "rotate_in_place"}
 REQUIRED_WAYPOINT_COORDS = ("x", "y", "z")
 OPTIONAL_WAYPOINT_NUMBERS = ("rot_x", "rot_y", "rot_z")
 
@@ -52,9 +52,9 @@ def validate_object_config(objects: list[dict]) -> list[str]:
             errors.append(f"{label} mode must be one of {sorted(VALID_MODES)}")
             continue
 
-        if mode in {"path", "out_and_back", "teleport_loop"}:
+        if mode in {"ping_pong_path", "return_to_start", "reset_loop"}:
             _validate_waypoints(obj.get("waypoints"), label, errors)
-        elif mode == "spin":
+        elif mode == "rotate_in_place":
             _validate_spin_rate(obj.get("spin_rate_deg_per_sec"), label, errors)
 
     return errors
