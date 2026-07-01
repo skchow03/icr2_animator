@@ -16,10 +16,8 @@ All memory addresses are relative to exe_base (as in Ghidra/notes).
 
 import time
 import math
-import json
 import struct
-import threading
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 from icr2_memory import ICR2Memory
 
 
@@ -91,7 +89,8 @@ class ICR2ObjectAnimator:
 
     # ---------------- Modes ----------------
     def animate_path(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                     waypoints: List[Dict[str, Any]], name: str = "Object"):
+                     waypoints: List[Dict[str, Any]], name: str = "Object",
+                     stop_event=None):
         """Move object back and forth along waypoints, returning to original start."""
         start_wp = {
             "x": start[0], "y": start[1], "z": start[2],
@@ -104,6 +103,10 @@ class ICR2ObjectAnimator:
         current = start
 
         while True:
+            if stop_event and stop_event.is_set():
+                if self.verbose:
+                    print(f"[{name}] Stop requested, exiting path loop.")
+                return
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting path loop.")
@@ -122,6 +125,8 @@ class ICR2ObjectAnimator:
                 total_frames = max(1, int(duration * self.fps))
 
                 for f in range(total_frames + 1):
+                    if stop_event and stop_event.is_set():
+                        return
                     if not self.is_alive():
                         return
                     progress = f / total_frames
@@ -137,7 +142,8 @@ class ICR2ObjectAnimator:
                 current = target
 
     def animate_out_and_back(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                             waypoints: List[Dict[str, Any]], name: str = "Object"):
+                             waypoints: List[Dict[str, Any]], name: str = "Object",
+                             stop_event=None):
         """Animate: start → waypoints → return directly to start → repeat."""
         start_wp = {
             "x": start[0], "y": start[1], "z": start[2],
@@ -149,6 +155,10 @@ class ICR2ObjectAnimator:
         current = start
 
         while True:
+            if stop_event and stop_event.is_set():
+                if self.verbose:
+                    print(f"[{name}] Stop requested, exiting out-and-back loop.")
+                return
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting out-and-back loop.")
@@ -168,6 +178,8 @@ class ICR2ObjectAnimator:
                 total_frames = max(1, int(duration * self.fps))
 
                 for f in range(total_frames + 1):
+                    if stop_event and stop_event.is_set():
+                        return
                     if not self.is_alive():
                         return
                     progress = f / total_frames
@@ -193,6 +205,8 @@ class ICR2ObjectAnimator:
             total_frames = max(1, int(duration * self.fps))
 
             for f in range(total_frames + 1):
+                if stop_event and stop_event.is_set():
+                    return
                 if not self.is_alive():
                     return
                 progress = f / total_frames
@@ -206,11 +220,16 @@ class ICR2ObjectAnimator:
             current = target
 
     def animate_spin(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                     spin_rate: Tuple[float, float, float], name: str = "Object"):
+                     spin_rate: Tuple[float, float, float], name: str = "Object",
+                     stop_event=None):
         """Spin object in place forever."""
         pos = start[:3]
         rot = [self.units_to_degrees(r) for r in start[3:]]
         while True:
+            if stop_event and stop_event.is_set():
+                if self.verbose:
+                    print(f"[{name}] Stop requested, exiting spin loop.")
+                return
             if not self.is_alive():
                 if self.verbose:
                     print(f"[{name}] DOSBox closed, exiting spin loop.")
@@ -228,7 +247,7 @@ class ICR2ObjectAnimator:
     # ---------------- Search ----------------
     def find_coordinates_bulk(self, target_coords: Tuple[int, int, int],
                               search_range: Tuple[int, int],
-                              chunk_size: int = 0x40000) -> int:
+                              chunk_size: int = 0x40000) -> Optional[int]:
         """
         Fast search for (x,y,z) coordinates in memory.
         Returns relative offset or None if not found.
@@ -264,72 +283,20 @@ class ICR2ObjectAnimator:
         return None
 
 
-# ---------------- Config Loader ----------------
-def load_config(path="objects.json") -> List[Dict[str, Any]]:
-    with open(path, "r") as f:
-        return json.load(f)["objects"]
-
 
 # ---------------- Main ----------------
 def main():
-    animator = ICR2ObjectAnimator(verbose=True)
-    animator.connect()
+    from animator_service import AnimatorService
+
+    service = AnimatorService(verbose=True)
     try:
-        config = load_config()
-
-        threads = []
-        for obj in config:
-            rel_addr = animator.find_coordinates_bulk(
-                tuple(obj["search_coords"]), (0, 0xF0000000)
-            )
-            if rel_addr is None:
-                print(f"[Animator] {obj['name']} not found.")
-                continue
-
-            start_vals = animator.read_object6(rel_addr)
-
-            if obj["mode"] == "path":
-                t = threading.Thread(
-                    target=animator.animate_path,
-                    args=(rel_addr, start_vals, obj["waypoints"], obj["name"]),
-                    daemon=True
-                )
-            elif obj["mode"] == "out_and_back":
-                t = threading.Thread(
-                    target=animator.animate_out_and_back,
-                    args=(rel_addr, start_vals, obj["waypoints"], obj["name"]),
-                    daemon=True
-                )
-            elif obj["mode"] == "spin":
-                spin = tuple(obj["spin_rate_deg_per_sec"])
-                t = threading.Thread(
-                    target=animator.animate_spin,
-                    args=(rel_addr, start_vals, spin, obj["name"]),
-                    daemon=True
-                )
-            else:
-                print(f"[Animator] Unknown mode {obj['mode']} for {obj['name']}")
-                continue
-
-            t.start()
-            threads.append(t)
-
-        # Monitor process; exit when DOSBox closes or threads die
-        while True:
-            if not animator.is_alive():
-                print("[Main] DOSBox closed, shutting down animator.")
-                break
-            # If all threads have stopped, quit too
-            if not any(t.is_alive() for t in threads):
-                print("[Main] All animation threads exited, shutting down animator.")
-                break
-            time.sleep(1)
-
-
+        objects = service.load_objects("objects.json")
+        service.start(objects)
+        service.wait()
     except KeyboardInterrupt:
         print("\nAnimation interrupted by user.")
     finally:
-        animator.disconnect()
+        service.stop()
 
 
 if __name__ == "__main__":
