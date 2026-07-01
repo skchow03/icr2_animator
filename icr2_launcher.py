@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any
+from typing import Any, TextIO
 
 from animator_service import AnimatorService
 from config_validation import VALID_MODES, validate_object_config
@@ -123,13 +124,31 @@ class ToolTip:
             self.tip_window = None
 
 
+class ConsoleRedirector:
+    """File-like stream that mirrors console output into the launcher log."""
+
+    def __init__(self, original: TextIO, write_callback) -> None:
+        self.original = original
+        self.write_callback = write_callback
+
+    def write(self, message: str) -> int:
+        self.original.write(message)
+        self.original.flush()
+        if message:
+            self.write_callback(message)
+        return len(message)
+
+    def flush(self) -> None:
+        self.original.flush()
+
+
 class ICR2Launcher(tk.Tk):
     """GUI for editing compatible object configs and controlling animations."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title("ICR2 Animator Launcher")
-        self.geometry("1020x700")
+        self.geometry("1260x700")
 
         self.objects: list[dict[str, Any]] = []
         self.current_index: int | None = None
@@ -138,6 +157,8 @@ class ICR2Launcher(tk.Tk):
         self.is_animating = False
         self.is_dirty = False
         self._populating_editor = False
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
 
         self.version_var = tk.StringVar(value=DEFAULT_ICR2_VERSION)
         self.config_path_var = tk.StringVar(value="objects.json")
@@ -153,6 +174,7 @@ class ICR2Launcher(tk.Tk):
         self.tooltips: list[ToolTip] = []
 
         self._build_widgets()
+        self._install_console_redirectors()
         self._load_config_path(Path(self.config_path_var.get()), show_errors=False)
         self._refresh_object_list()
         self._set_running_state(False)
@@ -162,10 +184,11 @@ class ICR2Launcher(tk.Tk):
         root = ttk.Frame(self, padding=10)
         root.pack(fill="both", expand=True)
         root.columnconfigure(1, weight=1)
+        root.columnconfigure(2, weight=1)
         root.rowconfigure(1, weight=1)
 
         top = ttk.Frame(root)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         top.columnconfigure(3, weight=1)
 
         version_label = ttk.Label(top, text="ICR2 version")
@@ -273,8 +296,18 @@ class ICR2Launcher(tk.Tk):
         self.general_help_label.grid(row=8, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
         for widget in (self.name_entry, self.start_delay_entry, self.waypoints_text):
             self._bind_auto_apply(widget)
+        console = ttk.LabelFrame(root, text="Console messages")
+        console.grid(row=1, column=2, sticky="nsew", padx=(10, 0))
+        console.rowconfigure(0, weight=1)
+        console.columnconfigure(0, weight=1)
+        self.console_text = tk.Text(console, height=10, width=36, wrap="word", state="disabled")
+        self.console_text.grid(row=0, column=0, sticky="nsew")
+        self.console_scrollbar = ttk.Scrollbar(console, orient="vertical", command=self.console_text.yview)
+        self.console_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.console_text.configure(yscrollcommand=self.console_scrollbar.set)
+
         bottom = ttk.Frame(root)
-        bottom.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         bottom.columnconfigure(0, weight=1)
         ttk.Label(bottom, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
         self.dirty_status_label = ttk.Label(bottom, textvariable=self.dirty_status_var, foreground="#b35c00")
@@ -297,6 +330,7 @@ class ICR2Launcher(tk.Tk):
                 self.fps_entry: TOOLTIPS["fps"],
                 self.tooltips_check: TOOLTIPS["tooltips_toggle"],
                 self.object_list: TOOLTIPS["object_list"],
+                self.console_text: "Live log of messages printed to the console by the launcher and animator service.",
                 name_label: TOOLTIPS["name"],
                 self.name_entry: TOOLTIPS["name"],
                 mode_label: TOOLTIPS["mode"],
@@ -326,6 +360,19 @@ class ICR2Launcher(tk.Tk):
                 )
             )
         self._update_mode_help()
+
+    def _install_console_redirectors(self) -> None:
+        sys.stdout = ConsoleRedirector(self._original_stdout, self._append_console_message)
+        sys.stderr = ConsoleRedirector(self._original_stderr, self._append_console_message)
+
+    def _append_console_message(self, message: str) -> None:
+        self.after(0, lambda: self._write_console_message(message))
+
+    def _write_console_message(self, message: str) -> None:
+        self.console_text.configure(state="normal")
+        self.console_text.insert(tk.END, message)
+        self.console_text.see(tk.END)
+        self.console_text.configure(state="disabled")
 
     def _add_tooltips(self, tooltip_map: dict[tk.Widget, str]) -> None:
         for widget, text in tooltip_map.items():
@@ -415,7 +462,10 @@ class ICR2Launcher(tk.Tk):
         for index, obj in enumerate(self.objects):
             self.object_list.insert(tk.END, obj.get("name") or f"object #{index + 1}")
         if self.current_index is not None and self.current_index < len(self.objects):
+            self.object_list.selection_clear(0, tk.END)
             self.object_list.selection_set(self.current_index)
+            self.object_list.activate(self.current_index)
+            self.object_list.see(self.current_index)
 
     def _on_object_select(self, _event: tk.Event) -> None:
         if self.is_animating:
@@ -429,6 +479,7 @@ class ICR2Launcher(tk.Tk):
                 self._refresh_object_list()
                 return
             self.current_index = selected_index
+            self._refresh_object_list()
             self._populate_editor()
 
     def _populate_editor(self) -> None:
@@ -742,6 +793,8 @@ class ICR2Launcher(tk.Tk):
     def _on_close(self) -> None:
         if self.service:
             self.service.stop()
+        sys.stdout = self._original_stdout
+        sys.stderr = self._original_stderr
         self.destroy()
 
 
