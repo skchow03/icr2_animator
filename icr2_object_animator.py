@@ -18,21 +18,23 @@ import time
 import math
 import struct
 from typing import Tuple, List, Dict, Any, Optional
-from icr2_memory import ICR2Memory
+from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_version
 
 
 class ICR2ObjectAnimator:
     UNITS_PER_DEGREE = 4294967296 / 360.0  # 4-byte signed int covers 360°
 
-    def __init__(self, version="REND32A", verbose=True):
+    def __init__(self, version=DEFAULT_ICR2_VERSION, verbose=True):
         self.memory = None
-        self.version = version
+        self.version = normalize_version(version)
         self.verbose = verbose
         self.fps = 30
         self.frame_time = 1.0 / self.fps
 
     # ---------------- Connection ----------------
     def connect(self):
+        from icr2_memory import ICR2Memory
+
         self.memory = ICR2Memory(self.version, verbose=self.verbose)
         if self.verbose:
             print(f"[Animator] Connected ({self.version})")
@@ -285,12 +287,28 @@ class ICR2ObjectAnimator:
 
 
 # ---------------- Main ----------------
-def main():
+def main(argv=None):
+    import argparse
+
     from animator_service import AnimatorService
 
-    service = AnimatorService(verbose=True)
+    parser = argparse.ArgumentParser(description="Animate configured ICR2 objects in DOSBox.")
+    parser.add_argument(
+        "--version",
+        choices=KNOWN_ICR2_VERSIONS,
+        default=DEFAULT_ICR2_VERSION,
+        help="ICR2 executable/window-title identifier to attach to.",
+    )
+    parser.add_argument(
+        "--config",
+        default="objects.json",
+        help="Path to the object animation JSON configuration file.",
+    )
+    args = parser.parse_args(argv)
+
+    service = AnimatorService(version=args.version, verbose=True)
     try:
-        objects = service.load_objects("objects.json")
+        objects = service.load_objects(args.config)
         service.start(objects)
         service.wait()
     except KeyboardInterrupt:
