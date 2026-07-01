@@ -24,6 +24,7 @@ import ctypes.wintypes
 import struct
 from typing import List, Optional, Tuple
 
+from icr2_logging import log_info
 from icr2_versions import ICR2_VERSION_CONFIGS, normalize_version
 
 import pymem
@@ -221,13 +222,13 @@ class ICR2Memory:
             raise RuntimeError(f"Target window not found for keywords {window_keywords}")
 
         if self.verbose:
-            print(f"[ICR2Memory] Target window found: '{info['title']}' (PID {info['pid']}). Attaching...")
+            log_info("ICR2Memory", f"Target window found: {info['title']!r} (PID {info['pid']}). Attaching...")
 
         self.pm = pymem.Pymem()
         self.pm.open_process_from_id(info['pid'])
 
         if self.verbose:
-            print("[ICR2Memory] Scanning memory for signature...")
+            log_info("ICR2Memory", "Scanning memory for signature...")
 
         hit = find_pattern_address(self.pm, signature_bytes)
         if not hit:
@@ -238,8 +239,7 @@ class ICR2Memory:
         self.window_title = info['title']
 
         if self.verbose:
-            print(f"[ICR2Memory] Signature found at 0x{hit:08X}. "
-                  f"Using offset 0x{int(signature_offset):X} -> EXE base 0x{self.exe_base:08X}")
+            log_info("ICR2Memory", f"Signature found at 0x{hit:08X}. Using offset 0x{int(signature_offset):X} -> EXE base 0x{self.exe_base:08X}")
 
     # --- lifecycle / context management ---
 
@@ -251,7 +251,7 @@ class ICR2Memory:
             finally:
                 self.pm = None
             if self.verbose:
-                print("[ICR2Memory] Detached from process.")
+                log_info("ICR2Memory", "Detached from process.")
 
     def __enter__(self) -> "ICR2Memory":
         return self

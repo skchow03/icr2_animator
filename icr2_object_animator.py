@@ -20,6 +20,7 @@ import math
 import struct
 import threading
 from typing import Tuple, List, Dict, Any, Optional
+from icr2_logging import log_debug, log_error, log_info, log_warn
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_version
 
 
@@ -49,14 +50,14 @@ class ICR2ObjectAnimator:
 
         self.memory = ICR2Memory(self.version, verbose=self.verbose)
         if self.verbose:
-            print(f"[Animator] Connected ({self.version})")
+            log_info("Animator", f"Connected ({self.version})")
 
     def disconnect(self):
         if self.memory:
             self.memory.close()
             self.memory = None
             if self.verbose:
-                print("[Animator] Disconnected")
+                log_info("Animator", "Disconnected")
 
     def is_alive(self) -> bool:
         """Check if the DOSBox process is still alive."""
@@ -84,7 +85,7 @@ class ICR2ObjectAnimator:
             self.memory.pm.write_bytes(abs_addr, data, len(data))
         except Exception as e:
             if self.verbose:
-                print(f"[Animator] Write failed at 0x{abs_addr:X}: {e}")
+                log_error("Animator", f"Write failed at 0x{abs_addr:X}: {e}")
             raise SystemExit
 
     # ---------------- Helpers ----------------
@@ -120,7 +121,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting ping-pong path loop.")
+                    log_warn(name, "DOSBox closed, exiting ping-pong path loop.")
                 return
             seq = full_wp + full_wp[-2:0:-1]  # forward + backward
             for wp in seq:
@@ -148,7 +149,7 @@ class ICR2ObjectAnimator:
                     except SystemExit:
                         return
                     if self.verbose and f % max(1, int(self.fps // 2)) == 0:
-                        print(f"[{name}] Frame {f}/{total_frames} at {interp}")
+                        log_debug(name, f"Frame {f}/{total_frames} at {interp}")
                     time.sleep(self.frame_time)
                 current = target
 
@@ -169,7 +170,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting out-and-back loop.")
+                    log_warn(name, "DOSBox closed, exiting out-and-back loop.")
                 return
 
             # Forward pass through waypoints
@@ -238,7 +239,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting reset-loop loop.")
+                    log_warn(name, "DOSBox closed, exiting reset-loop loop.")
                 return
 
             for wp in waypoints:
@@ -289,7 +290,7 @@ class ICR2ObjectAnimator:
         while not stop_event.is_set():
             if not self.is_alive():
                 if self.verbose:
-                    print(f"[{name}] DOSBox closed, exiting rotate-in-place loop.")
+                    log_warn(name, "DOSBox closed, exiting rotate-in-place loop.")
                 return
             for i in range(3):
                 rot[i] += spin_rate[i] / self.fps
@@ -317,7 +318,7 @@ class ICR2ObjectAnimator:
 
         if self.verbose:
             mb = (end_offset - start_offset) / (1024 * 1024)
-            print(f"[Animator] Searching {mb:.1f} MB for {target_coords}")
+            log_debug("Animator", f"Scanning {mb:.1f} MB for target coordinates {target_coords}.")
 
         offset = start_offset
         overlap = 12
@@ -335,7 +336,7 @@ class ICR2ObjectAnimator:
             if idx != -1:
                 rel_addr = offset + idx
                 if self.verbose:
-                    print(f"[Animator] Found coords at rel offset 0x{rel_addr:X}")
+                    log_debug("Animator", f"Found coordinates at rel offset 0x{rel_addr:X}.")
                 return rel_addr
 
             offset += max(read_size - overlap, 1)
@@ -379,7 +380,7 @@ def main(argv=None):
         service.start(objects)
         service.wait()
     except KeyboardInterrupt:
-        print("\nAnimation interrupted by user.")
+        log_warn("Main", "Animation interrupted by user.")
     finally:
         service.stop()
 

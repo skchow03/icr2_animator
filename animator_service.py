@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Any
 
+from icr2_logging import log_error, log_info, log_warn
+
 from icr2_object_animator import ICR2ObjectAnimator
 from icr2_versions import DEFAULT_ICR2_VERSION, normalize_version
 
@@ -25,7 +27,7 @@ class AnimatorService:
         self.fps = fps
         self.animator: ICR2ObjectAnimator | None = None
         self.threads: list[threading.Thread] = []
-        self._active_objects: list[tuple[int, tuple[int, int, int, int, int, int]]] = []
+        self._active_objects: list[tuple[str, int, tuple[int, int, int, int, int, int]]] = []
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
@@ -48,16 +50,29 @@ class AnimatorService:
             self._stop_event.clear()
             self.threads = []
             self._active_objects = []
+            if self.verbose:
+                log_info("Main", f"Starting animation: version={self.version}, fps={self.fps:g}, objects={len(objects)}")
             self.animator = ICR2ObjectAnimator(version=self.version, verbose=self.verbose, fps=self.fps)
             self.animator.connect()
 
+            started_count = 0
             for obj in objects:
-                self._start_object_animation(obj)
+                if self._start_object_animation(obj):
+                    started_count += 1
+            if self.verbose:
+                if started_count:
+                    log_info("Main", f"Started {started_count}/{len(objects)} configured object(s).")
+                else:
+                    log_warn("Main", "No configured objects were started.")
 
     def stop(self):
         """Signal animation loops to stop and release DOSBox resources."""
+        if self.verbose:
+            log_info("Main", "Stop requested.")
         self._stop_event.set()
 
+        if self.verbose and self.threads:
+            log_info("Main", f"Waiting for {len(self.threads)} animation thread(s) to exit...")
         for thread in list(self.threads):
             thread.join(timeout=2)
 
@@ -69,6 +84,8 @@ class AnimatorService:
 
         self.threads = []
         self._active_objects = []
+        if self.verbose:
+            log_info("Main", "Stop complete.")
 
     def is_running(self) -> bool:
         """Return True while at least one tracked animation thread is alive."""
@@ -80,29 +97,34 @@ class AnimatorService:
             while not self._stop_event.is_set():
                 animator = self.animator
                 if animator and not animator.is_alive():
-                    print("[Main] DOSBox closed, shutting down animator.")
+                    log_warn("Main", "DOSBox closed, shutting down animator.")
                     break
                 if not self.is_running():
-                    print("[Main] All animation threads exited, shutting down animator.")
+                    log_info("Main", "All animation threads exited, shutting down animator.")
                     break
                 time.sleep(poll_interval)
         finally:
             self.stop()
 
-    def _start_object_animation(self, obj: dict[str, Any]):
+    def _start_object_animation(self, obj: dict[str, Any]) -> bool:
         if not self.animator:
             raise RuntimeError("Animator is not connected")
 
-        rel_addr = self.animator.find_coordinates_bulk(
-            tuple(obj["search_coords"]), (0, 0xF0000000)
-        )
+        name = obj["name"]
+        search_coords = tuple(obj["search_coords"])
+        if self.verbose:
+            log_info("Animator", f"Searching for {name!r} at search_coords={search_coords}.")
+        rel_addr = self.animator.find_coordinates_bulk(search_coords, (0, 0xF0000000))
         if rel_addr is None:
-            print(f"[Animator] {obj['name']} not found.")
-            return
+            log_warn("Animator", f"{name!r} not found at search_coords={search_coords}.")
+            return False
 
         start_vals = self.animator.read_object6(rel_addr)
         mode = obj["mode"]
-        self._active_objects.append((rel_addr, start_vals))
+        self._active_objects.append((name, rel_addr, start_vals))
+        if self.verbose:
+            abs_addr = self.animator.memory.exe_base + rel_addr
+            log_info("Animator", f"Found {name!r} at rel=0x{rel_addr:X}, abs=0x{abs_addr:X}, start_values={start_vals}.")
 
         if mode == "ping_pong_path":
             target = self.animator.animate_ping_pong_path
@@ -123,8 +145,8 @@ class AnimatorService:
                 self._stop_event,
             )
         else:
-            print(f"[Animator] Unknown mode {mode} for {obj['name']}")
-            return
+            log_error("Animator", f"Unknown mode {mode!r} for {name!r}.")
+            return False
 
         start_delay_seconds = float(obj.get("start_delay_seconds", 0) or 0)
         thread = threading.Thread(
@@ -134,15 +156,28 @@ class AnimatorService:
         )
         thread.start()
         self.threads.append(thread)
+        if self.verbose:
+            if mode == "rotate_in_place":
+                detail = f"spin_rate={tuple(obj['spin_rate_deg_per_sec'])}"
+            else:
+                detail = f"waypoints={len(obj['waypoints'])}"
+            log_info("Animator", f"Started {name!r}: mode={mode}, {detail}, rel=0x{rel_addr:X}, delay={start_delay_seconds:g}s.")
+        return True
 
     def _run_after_start_delay(self, delay_seconds: float, target, args: tuple, name: str) -> None:
         """Wait for an object's configured start delay, then run its animation loop."""
         if delay_seconds > 0:
             if self.verbose:
-                print(f"[Animator] Waiting {delay_seconds:g}s before starting {name}.")
+                log_info("Animator", f"Waiting {delay_seconds:g}s before starting {name!r}.")
             if self._stop_event.wait(delay_seconds):
+                if self.verbose:
+                    log_info("Animator", f"Start delay cancelled for {name!r} because animation was stopped.")
                 return
+            if self.verbose:
+                log_info("Animator", f"Delay complete; starting {name!r}.")
         target(*args)
+        if self.verbose and self._stop_event.is_set():
+            log_info("Animator", f"{name!r} exited because stop was requested.")
 
     def _reset_active_objects(self) -> None:
         """Restore every discovered object to the coordinates captured at start()."""
@@ -150,8 +185,14 @@ class AnimatorService:
         if not animator or not animator.is_alive():
             return
 
-        for rel_addr, start_vals in self._active_objects:
+        if self.verbose and self._active_objects:
+            log_info("Main", f"Restoring {len(self._active_objects)} object(s) to captured start values...")
+
+        for name, rel_addr, start_vals in self._active_objects:
             try:
                 animator.write_object6(rel_addr, start_vals)
+                if self.verbose:
+                    log_info("Main", f"Restored {name!r} to start values at rel=0x{rel_addr:X}.")
             except SystemExit:
+                log_error("Main", f"Failed to restore {name!r} at rel=0x{rel_addr:X}; DOSBox is no longer available.")
                 return
