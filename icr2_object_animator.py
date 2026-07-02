@@ -415,7 +415,15 @@ def main(argv=None):
     import argparse
 
     from animator_service import AnimatorService
+    from app_settings import AppSettings, parse_window_keywords
     from config_validation import validate_object_config
+
+    app_settings = AppSettings()
+    default_version = app_settings.selected_version()
+    default_config = app_settings.config_path()
+    default_fps = app_settings.fps()
+    default_window_keywords = app_settings.window_keywords_for_version(default_version)
+    default_window_keywords_text = ", ".join(default_window_keywords)
 
     parser = argparse.ArgumentParser(
         description="Animate configured ICR2 objects in DOSBox."
@@ -423,23 +431,57 @@ def main(argv=None):
     parser.add_argument(
         "--version",
         choices=KNOWN_ICR2_VERSIONS,
-        default=DEFAULT_ICR2_VERSION,
-        help="ICR2 executable/window-title identifier to attach to.",
+        default=default_version,
+        help=(
+            "ICR2 executable/window-title identifier to attach to "
+            f"(default: {default_version})."
+        ),
     )
     parser.add_argument(
         "--config",
-        default="objects.json",
-        help="Path to the object animation JSON configuration file.",
+        default=default_config,
+        help=(
+            "Path to the object animation JSON configuration file "
+            f"(default: {default_config})."
+        ),
     )
     parser.add_argument(
         "--fps",
         type=float,
-        default=60,
-        help="Animation frames per second (default: 60).",
+        default=float(default_fps),
+        help=f"Animation frames per second (default: {default_fps}).",
+    )
+    parser.add_argument(
+        "--window-keywords",
+        default=default_window_keywords_text,
+        help=(
+            "Comma-separated words that must appear in the DOSBox window title "
+            f"(default: {default_window_keywords_text})."
+        ),
+    )
+    parser.add_argument(
+        "--save-settings",
+        action="store_true",
+        help="Save the resolved CLI settings to the application INI after parsing.",
     )
     args = parser.parse_args(argv)
+    window_keywords = parse_window_keywords(args.window_keywords)
+    if not window_keywords:
+        parser.error("--window-keywords must include at least one non-empty keyword")
 
-    service = AnimatorService(version=args.version, verbose=True, fps=args.fps)
+    if args.save_settings:
+        app_settings.set_launcher_settings(
+            version=args.version,
+            config_path=args.config,
+            fps=f"{args.fps:g}",
+            tooltips_enabled=app_settings.tooltips_enabled(),
+        )
+        app_settings.set_window_keywords_for_version(args.version, window_keywords)
+        app_settings.save()
+
+    service = AnimatorService(
+        version=args.version, verbose=True, fps=args.fps, window_keywords=window_keywords
+    )
     try:
         objects = service.load_objects(args.config)
         validation_errors = validate_object_config(objects)
