@@ -29,7 +29,13 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, TextIO
 
 from animator_service import AnimatorService
-from app_settings import AppSettings, parse_window_keywords
+from app_settings import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_FPS,
+    DEFAULT_TOOLTIPS_ENABLED,
+    AppSettings,
+    parse_window_keywords,
+)
 from icr2_logging import log_error, log_info
 from config_validation import VALID_MODES, validate_object_config
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
@@ -178,10 +184,17 @@ class ICR2Launcher(tk.Tk):
         self._original_stderr = sys.stderr
 
         self.app_settings = AppSettings()
-        self.version_var = tk.StringVar(value=DEFAULT_ICR2_VERSION)
+        selected_version = self.app_settings.selected_version(DEFAULT_ICR2_VERSION)
+        config_path = self.app_settings.config_path(DEFAULT_CONFIG_PATH)
+        fps = self.app_settings.fps(DEFAULT_FPS)
+        tooltips_enabled = self.app_settings.tooltips_enabled(
+            DEFAULT_TOOLTIPS_ENABLED
+        )
+
+        self.version_var = tk.StringVar(value=selected_version)
         self.window_keywords_var = tk.StringVar()
-        self.config_path_var = tk.StringVar(value="objects.json")
-        self.fps_var = tk.StringVar(value="60")
+        self.config_path_var = tk.StringVar(value=config_path)
+        self.fps_var = tk.StringVar(value=fps)
         self.name_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="ping_pong_path")
         self.start_delay_var = tk.StringVar(value="0")
@@ -193,10 +206,11 @@ class ICR2Launcher(tk.Tk):
             value="Load or edit a config, then start animation."
         )
         self.dirty_status_var = tk.StringVar(value="Saved")
-        self.tooltips_enabled_var = tk.BooleanVar(value=False)
+        self.tooltips_enabled_var = tk.BooleanVar(value=tooltips_enabled)
         self.tooltips: list[ToolTip] = []
 
         self._load_window_keywords_for_selected_version()
+        self._install_settings_traces()
         self._build_widgets()
         self._install_console_redirectors()
         self._load_config_path(Path(self.config_path_var.get()), show_errors=False)
@@ -481,8 +495,33 @@ class ICR2Launcher(tk.Tk):
         keywords = self.app_settings.window_keywords_for_version(self.version_var.get())
         self.window_keywords_var.set(", ".join(keywords))
 
+    def _install_settings_traces(self) -> None:
+        for variable in (
+            self.version_var,
+            self.config_path_var,
+            self.fps_var,
+            self.tooltips_enabled_var,
+        ):
+            variable.trace_add("write", self._save_app_settings)
+        self.window_keywords_var.trace_add("write", self._save_app_settings)
+
+    def _save_app_settings(self, *_args: object) -> None:
+        self.app_settings.set_launcher_settings(
+            version=self.version_var.get(),
+            config_path=self.config_path_var.get(),
+            fps=self.fps_var.get(),
+            tooltips_enabled=self.tooltips_enabled_var.get(),
+        )
+        keywords = parse_window_keywords(self.window_keywords_var.get())
+        if keywords:
+            self.app_settings.set_window_keywords_for_version(
+                self.version_var.get(), keywords
+            )
+        self.app_settings.save()
+
     def _on_version_selected(self, _event: tk.Event | None = None) -> None:
         self._load_window_keywords_for_selected_version()
+        self._save_app_settings()
 
     def _window_keywords_or_show_error(self) -> list[str] | None:
         keywords = parse_window_keywords(self.window_keywords_var.get())
@@ -519,6 +558,7 @@ class ICR2Launcher(tk.Tk):
             )
 
     def _on_tooltips_toggle(self) -> None:
+        self._save_app_settings()
         if not self.tooltips_enabled_var.get():
             for tooltip in self.tooltips:
                 tooltip.hide()
@@ -958,6 +998,7 @@ class ICR2Launcher(tk.Tk):
         self.app_settings.set_window_keywords_for_version(
             self.version_var.get(), window_keywords
         )
+        self._save_app_settings()
         log_info(
             "Main",
             f"Starting animation from config={self.config_path_var.get()!r}, version={self.version_var.get()}, fps={fps:g}, objects={len(self.objects)}, window_keywords={window_keywords}.",
@@ -1060,6 +1101,7 @@ class ICR2Launcher(tk.Tk):
         return True
 
     def _on_close(self) -> None:
+        self._save_app_settings()
         if self.service:
             self.service.stop()
         sys.stdout = self._original_stdout
