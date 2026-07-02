@@ -19,7 +19,7 @@ import time
 import math
 import struct
 import threading
-from typing import Tuple, List, Dict, Any, Optional
+from typing import Tuple, List, Dict, Any, Optional, Sequence
 from icr2_logging import log_debug, log_error, log_info, log_warn
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_version
 
@@ -27,11 +27,20 @@ from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_v
 class ICR2ObjectAnimator:
     UNITS_PER_DEGREE = 4294967296 / 360.0  # 4-byte signed int covers 360°
 
-    def __init__(self, version=DEFAULT_ICR2_VERSION, verbose=True, fps: float = 60):
+    def __init__(
+        self,
+        version=DEFAULT_ICR2_VERSION,
+        verbose=True,
+        fps: float = 60,
+        window_keywords: Sequence[str] | None = None,
+    ):
         self.memory = None
         self.version = normalize_version(version)
         self.verbose = verbose
         self.fps = self._validate_fps(fps)
+        self.window_keywords = (
+            tuple(window_keywords) if window_keywords is not None else None
+        )
         self.frame_time = 1.0 / self.fps
 
     def _validate_fps(self, fps: float) -> float:
@@ -45,10 +54,19 @@ class ICR2ObjectAnimator:
         return fps_value
 
     # ---------------- Connection ----------------
-    def connect(self):
+    def connect(self, window_keywords: Sequence[str] | None = None):
         from icr2_memory import ICR2Memory
 
-        self.memory = ICR2Memory(self.version, verbose=self.verbose)
+        effective_keywords = (
+            window_keywords if window_keywords is not None else self.window_keywords
+        )
+        self.memory = ICR2Memory(
+            self.version,
+            verbose=self.verbose,
+            window_keywords=(
+                list(effective_keywords) if effective_keywords is not None else None
+            ),
+        )
         if self.verbose:
             log_info("Animator", f"Connected ({self.version})")
 
@@ -73,14 +91,14 @@ class ICR2ObjectAnimator:
         """Read x,y,z, rotX, rotY, rotZ (6 ints)."""
         abs_addr = self.memory.exe_base + rel_addr
         data = self.memory.pm.read_bytes(abs_addr, 24)
-        return struct.unpack('<iiiiii', data)
+        return struct.unpack("<iiiiii", data)
 
     def write_object6(self, rel_addr: int, values: Tuple[int, int, int, int, int, int]):
         """Write x,y,z, rotX, rotY, rotZ (6 ints), safe against process exit."""
         if not self.is_alive():
             raise SystemExit
         abs_addr = self.memory.exe_base + rel_addr
-        data = struct.pack('<iiiiii', *values)
+        data = struct.pack("<iiiiii", *values)
         try:
             self.memory.pm.write_bytes(abs_addr, data, len(data))
         except Exception as e:
@@ -98,21 +116,30 @@ class ICR2ObjectAnimator:
     def mph_to_inches_per_sec(self, mph: float) -> float:
         return mph * 17.6  # 1 mph = 17.6 in/sec
 
-    def distance_in_inches(self, a: Tuple[int, int, int], b: Tuple[int, int, int]) -> float:
+    def distance_in_inches(
+        self, a: Tuple[int, int, int], b: Tuple[int, int, int]
+    ) -> float:
         dx, dy, dz = [(b[i] - a[i]) / 500.0 for i in range(3)]
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     # ---------------- Modes ----------------
-    def animate_ping_pong_path(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                     waypoints: List[Dict[str, Any]], name: str = "Object",
-                     stop_event=None):
+    def animate_ping_pong_path(
+        self,
+        rel_addr: int,
+        start: Tuple[int, int, int, int, int, int],
+        waypoints: List[Dict[str, Any]],
+        name: str = "Object",
+        stop_event=None,
+    ):
         """Move object back and forth along waypoints, returning to original start."""
         start_wp = {
-            "x": start[0], "y": start[1], "z": start[2],
+            "x": start[0],
+            "y": start[1],
+            "z": start[2],
             "rot_x": self.units_to_degrees(start[3]),
             "rot_y": self.units_to_degrees(start[4]),
             "rot_z": self.units_to_degrees(start[5]),
-            "speed_mph": waypoints[0].get("speed_mph", 30) if waypoints else 30
+            "speed_mph": waypoints[0].get("speed_mph", 30) if waypoints else 30,
         }
         full_wp = [start_wp] + waypoints
         current = start
@@ -126,7 +153,9 @@ class ICR2ObjectAnimator:
             seq = full_wp + full_wp[-2:0:-1]  # forward + backward
             for wp in seq:
                 target = (
-                    wp["x"], wp["y"], wp["z"],
+                    wp["x"],
+                    wp["y"],
+                    wp["z"],
                     self.degrees_to_units(wp.get("rot_x", 0)),
                     self.degrees_to_units(wp.get("rot_y", 0)),
                     self.degrees_to_units(wp.get("rot_z", 0)),
@@ -142,8 +171,10 @@ class ICR2ObjectAnimator:
                     if not self.is_alive():
                         return
                     progress = f / total_frames
-                    interp = tuple(int(current[i] + (target[i] - current[i]) * progress)
-                                   for i in range(6))
+                    interp = tuple(
+                        int(current[i] + (target[i] - current[i]) * progress)
+                        for i in range(6)
+                    )
                     try:
                         self.write_object6(rel_addr, interp)
                     except SystemExit:
@@ -153,16 +184,23 @@ class ICR2ObjectAnimator:
                     time.sleep(self.frame_time)
                 current = target
 
-    def animate_return_to_start(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                             waypoints: List[Dict[str, Any]], name: str = "Object",
-                             stop_event=None):
+    def animate_return_to_start(
+        self,
+        rel_addr: int,
+        start: Tuple[int, int, int, int, int, int],
+        waypoints: List[Dict[str, Any]],
+        name: str = "Object",
+        stop_event=None,
+    ):
         """Animate: start → waypoints → return directly to start → repeat."""
         start_wp = {
-            "x": start[0], "y": start[1], "z": start[2],
+            "x": start[0],
+            "y": start[1],
+            "z": start[2],
             "rot_x": self.units_to_degrees(start[3]),
             "rot_y": self.units_to_degrees(start[4]),
             "rot_z": self.units_to_degrees(start[5]),
-            "speed_mph": waypoints[0].get("speed_mph", 30) if waypoints else 30
+            "speed_mph": waypoints[0].get("speed_mph", 30) if waypoints else 30,
         }
         current = start
         stop_event = stop_event or threading.Event()
@@ -176,7 +214,9 @@ class ICR2ObjectAnimator:
             # Forward pass through waypoints
             for wp in waypoints:
                 target = (
-                    wp["x"], wp["y"], wp["z"],
+                    wp["x"],
+                    wp["y"],
+                    wp["z"],
                     self.degrees_to_units(wp.get("rot_x", 0)),
                     self.degrees_to_units(wp.get("rot_y", 0)),
                     self.degrees_to_units(wp.get("rot_z", 0)),
@@ -192,8 +232,10 @@ class ICR2ObjectAnimator:
                     if not self.is_alive():
                         return
                     progress = f / total_frames
-                    interp = tuple(int(current[i] + (target[i] - current[i]) * progress)
-                                   for i in range(6))
+                    interp = tuple(
+                        int(current[i] + (target[i] - current[i]) * progress)
+                        for i in range(6)
+                    )
                     try:
                         self.write_object6(rel_addr, interp)
                     except SystemExit:
@@ -203,7 +245,9 @@ class ICR2ObjectAnimator:
 
             # Return to start directly
             target = (
-                start_wp["x"], start_wp["y"], start_wp["z"],
+                start_wp["x"],
+                start_wp["y"],
+                start_wp["z"],
                 self.degrees_to_units(start_wp.get("rot_x", 0)),
                 self.degrees_to_units(start_wp.get("rot_y", 0)),
                 self.degrees_to_units(start_wp.get("rot_z", 0)),
@@ -219,8 +263,10 @@ class ICR2ObjectAnimator:
                 if not self.is_alive():
                     return
                 progress = f / total_frames
-                interp = tuple(int(current[i] + (target[i] - current[i]) * progress)
-                               for i in range(6))
+                interp = tuple(
+                    int(current[i] + (target[i] - current[i]) * progress)
+                    for i in range(6)
+                )
                 try:
                     self.write_object6(rel_addr, interp)
                 except SystemExit:
@@ -228,10 +274,14 @@ class ICR2ObjectAnimator:
                 time.sleep(self.frame_time)
             current = target
 
-
-    def animate_reset_loop(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                              waypoints: List[Dict[str, Any]], name: str = "Object",
-                              stop_event=None):
+    def animate_reset_loop(
+        self,
+        rel_addr: int,
+        start: Tuple[int, int, int, int, int, int],
+        waypoints: List[Dict[str, Any]],
+        name: str = "Object",
+        stop_event=None,
+    ):
         """Animate start → waypoints, then instantly reset to start and repeat."""
         current = start
         stop_event = stop_event or threading.Event()
@@ -244,7 +294,9 @@ class ICR2ObjectAnimator:
 
             for wp in waypoints:
                 target = (
-                    wp["x"], wp["y"], wp["z"],
+                    wp["x"],
+                    wp["y"],
+                    wp["z"],
                     self.degrees_to_units(wp.get("rot_x", 0)),
                     self.degrees_to_units(wp.get("rot_y", 0)),
                     self.degrees_to_units(wp.get("rot_z", 0)),
@@ -260,8 +312,10 @@ class ICR2ObjectAnimator:
                     if not self.is_alive():
                         return
                     progress = f / total_frames
-                    interp = tuple(int(current[i] + (target[i] - current[i]) * progress)
-                                   for i in range(6))
+                    interp = tuple(
+                        int(current[i] + (target[i] - current[i]) * progress)
+                        for i in range(6)
+                    )
                     try:
                         self.write_object6(rel_addr, interp)
                     except SystemExit:
@@ -279,9 +333,14 @@ class ICR2ObjectAnimator:
                 return
             current = start
 
-    def animate_rotate_in_place(self, rel_addr: int, start: Tuple[int, int, int, int, int, int],
-                     spin_rate: Tuple[float, float, float], name: str = "Object",
-                     stop_event=None):
+    def animate_rotate_in_place(
+        self,
+        rel_addr: int,
+        start: Tuple[int, int, int, int, int, int],
+        spin_rate: Tuple[float, float, float],
+        name: str = "Object",
+        stop_event=None,
+    ):
         """Rotate object in place forever."""
         pos = start[:3]
         rot = [self.units_to_degrees(r) for r in start[3:]]
@@ -305,20 +364,26 @@ class ICR2ObjectAnimator:
             time.sleep(self.frame_time)
 
     # ---------------- Search ----------------
-    def find_coordinates_bulk(self, target_coords: Tuple[int, int, int],
-                              search_range: Tuple[int, int],
-                              chunk_size: int = 0x40000) -> Optional[int]:
+    def find_coordinates_bulk(
+        self,
+        target_coords: Tuple[int, int, int],
+        search_range: Tuple[int, int],
+        chunk_size: int = 0x40000,
+    ) -> Optional[int]:
         """
         Fast search for (x,y,z) coordinates in memory.
         Returns relative offset or None if not found.
         """
         x_target, y_target, z_target = target_coords
         start_offset, end_offset = search_range
-        pattern = struct.pack('<iii', x_target, y_target, z_target)
+        pattern = struct.pack("<iii", x_target, y_target, z_target)
 
         if self.verbose:
             mb = (end_offset - start_offset) / (1024 * 1024)
-            log_debug("Animator", f"Scanning {mb:.1f} MB for target coordinates {target_coords}.")
+            log_debug(
+                "Animator",
+                f"Scanning {mb:.1f} MB for target coordinates {target_coords}.",
+            )
 
         offset = start_offset
         overlap = 12
@@ -336,12 +401,13 @@ class ICR2ObjectAnimator:
             if idx != -1:
                 rel_addr = offset + idx
                 if self.verbose:
-                    log_debug("Animator", f"Found coordinates at rel offset 0x{rel_addr:X}.")
+                    log_debug(
+                        "Animator", f"Found coordinates at rel offset 0x{rel_addr:X}."
+                    )
                 return rel_addr
 
             offset += max(read_size - overlap, 1)
         return None
-
 
 
 # ---------------- Main ----------------
@@ -351,7 +417,9 @@ def main(argv=None):
     from animator_service import AnimatorService
     from config_validation import validate_object_config
 
-    parser = argparse.ArgumentParser(description="Animate configured ICR2 objects in DOSBox.")
+    parser = argparse.ArgumentParser(
+        description="Animate configured ICR2 objects in DOSBox."
+    )
     parser.add_argument(
         "--version",
         choices=KNOWN_ICR2_VERSIONS,
@@ -376,7 +444,10 @@ def main(argv=None):
         objects = service.load_objects(args.config)
         validation_errors = validate_object_config(objects)
         if validation_errors:
-            raise ValueError("Config validation failed:\n" + "\n".join(f"- {error}" for error in validation_errors))
+            raise ValueError(
+                "Config validation failed:\n"
+                + "\n".join(f"- {error}" for error in validation_errors)
+            )
         service.start(objects)
         service.wait()
     except KeyboardInterrupt:

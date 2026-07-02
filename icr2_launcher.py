@@ -29,13 +29,21 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, TextIO
 
 from animator_service import AnimatorService
+from app_settings import AppSettings, parse_window_keywords
 from icr2_logging import log_error, log_info
 from config_validation import VALID_MODES, validate_object_config
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
 
-
 WAYPOINT_COLUMNS = ("x", "y", "z", "speed_mph", "rot_x", "rot_y", "rot_z")
-DEFAULT_WAYPOINT = {"x": 0, "y": 0, "z": 0, "speed_mph": 60, "rot_x": 0, "rot_y": 0, "rot_z": 0}
+DEFAULT_WAYPOINT = {
+    "x": 0,
+    "y": 0,
+    "z": 0,
+    "speed_mph": 60,
+    "rot_x": 0,
+    "rot_y": 0,
+    "rot_z": 0,
+}
 
 
 DEFAULT_OBJECT: dict[str, Any] = {
@@ -52,6 +60,7 @@ DEFAULT_OBJECT: dict[str, Any] = {
 
 TOOLTIPS = {
     "version": "Which ICR2/DOSBox build to attach to. This must match the running DOSBox window/version so memory offsets are interpreted correctly.",
+    "window_keywords": "Comma-separated words that must appear in the DOSBox window title for the selected ICR2 version. Saved per version in the application INI file.",
     "config": "JSON file containing the object definitions. Load reads it into this editor; Save writes the current objects back to disk.",
     "fps": "Animation update rate. Higher values are smoother but use more CPU. This does not change game FPS.",
     "object_list": "Objects in the current config. Select one to edit its animation settings.",
@@ -104,7 +113,11 @@ class ToolTip:
         widget.bind("<ButtonPress>", self.hide, add="+")
 
     def show(self, _event: tk.Event | None = None) -> None:
-        if self.tip_window or not self.text or (self.enabled_callback and not self.enabled_callback()):
+        if (
+            self.tip_window
+            or not self.text
+            or (self.enabled_callback and not self.enabled_callback())
+        ):
             return
         x = self.widget.winfo_rootx() + 20
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
@@ -164,7 +177,9 @@ class ICR2Launcher(tk.Tk):
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
 
+        self.app_settings = AppSettings()
         self.version_var = tk.StringVar(value=DEFAULT_ICR2_VERSION)
+        self.window_keywords_var = tk.StringVar()
         self.config_path_var = tk.StringVar(value="objects.json")
         self.fps_var = tk.StringVar(value="60")
         self.name_var = tk.StringVar()
@@ -174,11 +189,14 @@ class ICR2Launcher(tk.Tk):
         self.start_position_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.search_coord_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.spin_rate_vars = [tk.StringVar(value="0") for _ in range(3)]
-        self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
+        self.status_var = tk.StringVar(
+            value="Load or edit a config, then start animation."
+        )
         self.dirty_status_var = tk.StringVar(value="Saved")
         self.tooltips_enabled_var = tk.BooleanVar(value=False)
         self.tooltips: list[ToolTip] = []
 
+        self._load_window_keywords_for_selected_version()
         self._build_widgets()
         self._install_console_redirectors()
         self._load_config_path(Path(self.config_path_var.get()), show_errors=False)
@@ -195,31 +213,51 @@ class ICR2Launcher(tk.Tk):
 
         top = ttk.Frame(root)
         top.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
-        top.columnconfigure(3, weight=1)
+        top.columnconfigure(5, weight=1)
 
         version_label = ttk.Label(top, text="ICR2 version")
         version_label.grid(row=0, column=0, padx=(0, 6))
         self.version_combo = ttk.Combobox(
-            top, textvariable=self.version_var, values=KNOWN_ICR2_VERSIONS, state="readonly", width=14
+            top,
+            textvariable=self.version_var,
+            values=KNOWN_ICR2_VERSIONS,
+            state="readonly",
+            width=14,
         )
-        self.version_combo.grid(row=0, column=1, padx=(0, 14))
+        self.version_combo.grid(row=0, column=1, padx=(0, 10))
+        self.version_combo.bind("<<ComboboxSelected>>", self._on_version_selected)
+        keywords_label = ttk.Label(top, text="Window keywords")
+        keywords_label.grid(row=0, column=2, padx=(0, 6))
+        self.window_keywords_entry = ttk.Entry(
+            top, textvariable=self.window_keywords_var, width=24
+        )
+        self.window_keywords_entry.grid(row=0, column=3, sticky="ew", padx=(0, 14))
 
         config_label = ttk.Label(top, text="Config file")
-        config_label.grid(row=0, column=2, padx=(0, 6))
+        config_label.grid(row=0, column=4, padx=(0, 6))
         self.config_entry = ttk.Entry(top, textvariable=self.config_path_var)
-        self.config_entry.grid(row=0, column=3, sticky="ew", padx=(0, 6))
-        self.load_button = ttk.Button(top, text="Load", command=self._choose_and_load_config)
-        self.load_button.grid(row=0, column=4, padx=3)
+        self.config_entry.grid(row=0, column=5, sticky="ew", padx=(0, 6))
+        self.load_button = ttk.Button(
+            top, text="Load", command=self._choose_and_load_config
+        )
+        self.load_button.grid(row=0, column=6, padx=3)
         self.save_button = ttk.Button(top, text="Save", command=self._save_config)
-        self.save_button.grid(row=0, column=5, padx=3)
-        self.save_as_button = ttk.Button(top, text="Save As...", command=self._save_config_as)
-        self.save_as_button.grid(row=0, column=6, padx=3)
+        self.save_button.grid(row=0, column=7, padx=3)
+        self.save_as_button = ttk.Button(
+            top, text="Save As...", command=self._save_config_as
+        )
+        self.save_as_button.grid(row=0, column=8, padx=3)
         fps_label = ttk.Label(top, text="FPS")
-        fps_label.grid(row=0, column=7, padx=(14, 6))
+        fps_label.grid(row=0, column=9, padx=(14, 6))
         self.fps_entry = ttk.Entry(top, textvariable=self.fps_var, width=8)
-        self.fps_entry.grid(row=0, column=8, padx=3)
-        self.tooltips_check = ttk.Checkbutton(top, text="Tooltips", variable=self.tooltips_enabled_var, command=self._on_tooltips_toggle)
-        self.tooltips_check.grid(row=0, column=9, padx=(10, 0))
+        self.fps_entry.grid(row=0, column=10, padx=3)
+        self.tooltips_check = ttk.Checkbutton(
+            top,
+            text="Tooltips",
+            variable=self.tooltips_enabled_var,
+            command=self._on_tooltips_toggle,
+        )
+        self.tooltips_check.grid(row=0, column=11, padx=(10, 0))
 
         left = ttk.Frame(root)
         left.grid(row=1, column=0, sticky="ns", padx=(0, 10))
@@ -229,7 +267,9 @@ class ICR2Launcher(tk.Tk):
         self.object_list.bind("<<ListboxSelect>>", self._on_object_select)
         self.add_button = ttk.Button(left, text="Add object", command=self._add_object)
         self.add_button.grid(row=1, column=0, sticky="ew", pady=(8, 0), padx=(0, 4))
-        self.remove_button = ttk.Button(left, text="Remove object", command=self._remove_object)
+        self.remove_button = ttk.Button(
+            left, text="Remove object", command=self._remove_object
+        )
         self.remove_button.grid(row=1, column=1, sticky="ew", pady=(8, 0), padx=(4, 0))
 
         editor = ttk.LabelFrame(root, text="Object")
@@ -243,10 +283,17 @@ class ICR2Launcher(tk.Tk):
         self.name_entry.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
         mode_label = ttk.Label(editor, text="Animation mode")
         mode_label.grid(row=1, column=0, sticky="nw", padx=8, pady=6)
-        self.mode_combo = ttk.Combobox(editor, textvariable=self.mode_var, values=sorted(VALID_MODES), state="readonly")
+        self.mode_combo = ttk.Combobox(
+            editor,
+            textvariable=self.mode_var,
+            values=sorted(VALID_MODES),
+            state="readonly",
+        )
         self.mode_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=6)
         self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_selected)
-        self.mode_help_label = ttk.Label(editor, text="", wraplength=640, foreground="#444")
+        self.mode_help_label = ttk.Label(
+            editor, text="", wraplength=640, foreground="#444"
+        )
         self.mode_help_label.grid(row=2, column=1, sticky="ew", padx=8, pady=(0, 6))
         delay_label = ttk.Label(editor, text="Start delay (seconds)")
         delay_label.grid(row=3, column=0, sticky="nw", padx=8, pady=6)
@@ -261,13 +308,17 @@ class ICR2Launcher(tk.Tk):
         self.start_position_check.grid(row=4, column=0, sticky="nw", padx=8, pady=6)
         start_position_frame = ttk.Frame(editor)
         start_position_frame.grid(row=4, column=1, sticky="ew", padx=8, pady=6)
-        self.start_position_entries = self._build_vector_inputs(start_position_frame, self.start_position_vars, ("x", "y", "z"))
+        self.start_position_entries = self._build_vector_inputs(
+            start_position_frame, self.start_position_vars, ("x", "y", "z")
+        )
 
         search_label = ttk.Label(editor, text="Find object at")
         search_label.grid(row=5, column=0, sticky="nw", padx=8, pady=6)
         search_frame = ttk.Frame(editor)
         search_frame.grid(row=5, column=1, sticky="ew", padx=8, pady=6)
-        self.search_entries = self._build_vector_inputs(search_frame, self.search_coord_vars, ("x", "y", "z"))
+        self.search_entries = self._build_vector_inputs(
+            search_frame, self.search_coord_vars, ("x", "y", "z")
+        )
 
         waypoints_label = ttk.Label(editor, text="Waypoints")
         waypoints_label.grid(row=6, column=0, sticky="nw", padx=8, pady=6)
@@ -280,20 +331,34 @@ class ICR2Launcher(tk.Tk):
             text="Double-click a cell to edit. Use the buttons to add, duplicate, remove, or reorder points.",
         ).grid(row=0, column=0, sticky="w", pady=(0, 4))
         self.waypoints_text = tk.Text(editor, height=8, wrap="none")
-        self.waypoints_text.bind("<FocusOut>", lambda _event: self._refresh_waypoint_table())
+        self.waypoints_text.bind(
+            "<FocusOut>", lambda _event: self._refresh_waypoint_table()
+        )
         waypoint_tools = ttk.Frame(editor)
         waypoint_tools.grid(row=7, column=1, sticky="ew", padx=8, pady=(0, 6))
-        self.add_waypoint_button = ttk.Button(waypoint_tools, text="Add waypoint", command=self._add_waypoint)
+        self.add_waypoint_button = ttk.Button(
+            waypoint_tools, text="Add waypoint", command=self._add_waypoint
+        )
         self.add_waypoint_button.grid(row=0, column=0, padx=(0, 4))
-        self.remove_waypoint_button = ttk.Button(waypoint_tools, text="Remove waypoint", command=self._remove_waypoint)
+        self.remove_waypoint_button = ttk.Button(
+            waypoint_tools, text="Remove waypoint", command=self._remove_waypoint
+        )
         self.remove_waypoint_button.grid(row=0, column=1, padx=4)
-        self.move_waypoint_up_button = ttk.Button(waypoint_tools, text="Move up", command=lambda: self._move_waypoint(-1))
+        self.move_waypoint_up_button = ttk.Button(
+            waypoint_tools, text="Move up", command=lambda: self._move_waypoint(-1)
+        )
         self.move_waypoint_up_button.grid(row=0, column=2, padx=4)
-        self.move_waypoint_down_button = ttk.Button(waypoint_tools, text="Move down", command=lambda: self._move_waypoint(1))
+        self.move_waypoint_down_button = ttk.Button(
+            waypoint_tools, text="Move down", command=lambda: self._move_waypoint(1)
+        )
         self.move_waypoint_down_button.grid(row=0, column=3, padx=4)
 
         self.waypoint_table = ttk.Treeview(
-            waypoint_area, columns=WAYPOINT_COLUMNS, show="headings", height=6, selectmode="browse"
+            waypoint_area,
+            columns=WAYPOINT_COLUMNS,
+            show="headings",
+            height=6,
+            selectmode="browse",
         )
         for column in WAYPOINT_COLUMNS:
             self.waypoint_table.heading(column, text=column)
@@ -305,39 +370,59 @@ class ICR2Launcher(tk.Tk):
         spin_label.grid(row=8, column=0, sticky="nw", padx=8, pady=6)
         spin_frame = ttk.Frame(editor)
         spin_frame.grid(row=8, column=1, sticky="ew", padx=8, pady=6)
-        self.spin_entries = self._build_vector_inputs(spin_frame, self.spin_rate_vars, ("pitch", "yaw", "roll"))
+        self.spin_entries = self._build_vector_inputs(
+            spin_frame, self.spin_rate_vars, ("pitch", "yaw", "roll")
+        )
 
         self.search_text = tk.Text(editor, height=2, wrap="none")
         self.spin_text = tk.Text(editor, height=2, wrap="none")
-        self.general_help_label = ttk.Label(editor, text=GENERAL_HELP, wraplength=760, foreground="#444")
-        self.general_help_label.grid(row=9, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
+        self.general_help_label = ttk.Label(
+            editor, text=GENERAL_HELP, wraplength=760, foreground="#444"
+        )
+        self.general_help_label.grid(
+            row=9, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0)
+        )
         for widget in (self.name_entry, self.start_delay_entry, self.waypoints_text):
             self._bind_auto_apply(widget)
         console = ttk.LabelFrame(root, text="Console messages")
         console.grid(row=1, column=2, sticky="nsew", padx=(10, 0))
         console.rowconfigure(0, weight=1)
         console.columnconfigure(0, weight=1)
-        self.console_text = tk.Text(console, height=10, width=36, wrap="word", state="disabled")
+        self.console_text = tk.Text(
+            console, height=10, width=36, wrap="word", state="disabled"
+        )
         self.console_text.grid(row=0, column=0, sticky="nsew")
-        self.console_scrollbar = ttk.Scrollbar(console, orient="vertical", command=self.console_text.yview)
+        self.console_scrollbar = ttk.Scrollbar(
+            console, orient="vertical", command=self.console_text.yview
+        )
         self.console_scrollbar.grid(row=0, column=1, sticky="ns")
         self.console_text.configure(yscrollcommand=self.console_scrollbar.set)
 
         bottom = ttk.Frame(root)
         bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         bottom.columnconfigure(0, weight=1)
-        ttk.Label(bottom, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
-        self.dirty_status_label = ttk.Label(bottom, textvariable=self.dirty_status_var, foreground="#b35c00")
+        ttk.Label(bottom, textvariable=self.status_var).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.dirty_status_label = ttk.Label(
+            bottom, textvariable=self.dirty_status_var, foreground="#b35c00"
+        )
         self.dirty_status_label.grid(row=0, column=1, sticky="e", padx=(8, 12))
-        self.start_button = ttk.Button(bottom, text="Start animation", command=self._start_animation)
+        self.start_button = ttk.Button(
+            bottom, text="Start animation", command=self._start_animation
+        )
         self.start_button.grid(row=0, column=2, padx=4)
-        self.stop_button = ttk.Button(bottom, text="Stop animation", command=self._stop_animation)
+        self.stop_button = ttk.Button(
+            bottom, text="Stop animation", command=self._stop_animation
+        )
         self.stop_button.grid(row=0, column=3, padx=4)
 
         self._add_tooltips(
             {
                 version_label: TOOLTIPS["version"],
                 self.version_combo: TOOLTIPS["version"],
+                keywords_label: TOOLTIPS["window_keywords"],
+                self.window_keywords_entry: TOOLTIPS["window_keywords"],
                 config_label: TOOLTIPS["config"],
                 self.config_entry: TOOLTIPS["config"],
                 self.load_button: "Choose a config JSON file to load into the editor.",
@@ -370,19 +455,53 @@ class ICR2Launcher(tk.Tk):
                 self.stop_button: TOOLTIPS["stop"],
             }
         )
-        for entry in (*self.start_position_entries, *self.search_entries, *self.spin_entries):
+        for entry in (
+            *self.start_position_entries,
+            *self.search_entries,
+            *self.spin_entries,
+        ):
             self.tooltips.append(
                 ToolTip(
                     entry,
-                    TOOLTIPS["start_position"] if entry in self.start_position_entries else TOOLTIPS["search_coords"] if entry in self.search_entries else TOOLTIPS["spin_rate"],
+                    (
+                        TOOLTIPS["start_position"]
+                        if entry in self.start_position_entries
+                        else (
+                            TOOLTIPS["search_coords"]
+                            if entry in self.search_entries
+                            else TOOLTIPS["spin_rate"]
+                        )
+                    ),
                     enabled_callback=self.tooltips_enabled_var.get,
                 )
             )
         self._update_mode_help()
 
+    def _load_window_keywords_for_selected_version(self) -> None:
+        keywords = self.app_settings.window_keywords_for_version(self.version_var.get())
+        self.window_keywords_var.set(", ".join(keywords))
+
+    def _on_version_selected(self, _event: tk.Event | None = None) -> None:
+        self._load_window_keywords_for_selected_version()
+
+    def _window_keywords_or_show_error(self) -> list[str] | None:
+        keywords = parse_window_keywords(self.window_keywords_var.get())
+        if not keywords:
+            log_error("Main", "Window keywords cannot be empty.")
+            messagebox.showerror(
+                "Invalid window keywords",
+                "Enter at least one comma-separated window title keyword.",
+            )
+            return None
+        return keywords
+
     def _install_console_redirectors(self) -> None:
-        sys.stdout = ConsoleRedirector(self._original_stdout, self._append_console_message)
-        sys.stderr = ConsoleRedirector(self._original_stderr, self._append_console_message)
+        sys.stdout = ConsoleRedirector(
+            self._original_stdout, self._append_console_message
+        )
+        sys.stderr = ConsoleRedirector(
+            self._original_stderr, self._append_console_message
+        )
 
     def _append_console_message(self, message: str) -> None:
         self.after(0, lambda: self._write_console_message(message))
@@ -395,7 +514,9 @@ class ICR2Launcher(tk.Tk):
 
     def _add_tooltips(self, tooltip_map: dict[tk.Widget, str]) -> None:
         for widget, text in tooltip_map.items():
-            self.tooltips.append(ToolTip(widget, text, enabled_callback=self.tooltips_enabled_var.get))
+            self.tooltips.append(
+                ToolTip(widget, text, enabled_callback=self.tooltips_enabled_var.get)
+            )
 
     def _on_tooltips_toggle(self) -> None:
         if not self.tooltips_enabled_var.get():
@@ -416,14 +537,21 @@ class ICR2Launcher(tk.Tk):
 
     def _update_mode_help(self) -> None:
         mode = self.mode_var.get()
-        self.mode_help_label.configure(text=MODE_DESCRIPTIONS.get(mode, "Choose an animation mode."))
+        self.mode_help_label.configure(
+            text=MODE_DESCRIPTIONS.get(mode, "Choose an animation mode.")
+        )
 
     def _build_vector_inputs(
-        self, parent: ttk.Frame, variables: list[tk.StringVar], labels: tuple[str, str, str]
+        self,
+        parent: ttk.Frame,
+        variables: list[tk.StringVar],
+        labels: tuple[str, str, str],
     ) -> list[ttk.Entry]:
         entries: list[ttk.Entry] = []
         for index, (label, variable) in enumerate(zip(labels, variables, strict=True)):
-            ttk.Label(parent, text=label).grid(row=0, column=index * 2, sticky="w", padx=(0 if index == 0 else 10, 4))
+            ttk.Label(parent, text=label).grid(
+                row=0, column=index * 2, sticky="w", padx=(0 if index == 0 else 10, 4)
+            )
             entry = ttk.Entry(parent, textvariable=variable, width=10)
             entry.grid(row=0, column=index * 2 + 1, sticky="w")
             self._bind_auto_apply(entry)
@@ -434,7 +562,9 @@ class ICR2Launcher(tk.Tk):
     def _choose_and_load_config(self) -> None:
         if not self._ensure_stopped_for_edits():
             return
-        path = filedialog.askopenfilename(title="Load objects.json", filetypes=(("JSON", "*.json"), ("All", "*.*")))
+        path = filedialog.askopenfilename(
+            title="Load objects.json", filetypes=(("JSON", "*.json"), ("All", "*.*"))
+        )
         if path:
             self._load_config_path(Path(path), show_errors=True)
 
@@ -466,13 +596,17 @@ class ICR2Launcher(tk.Tk):
     def _save_config_as(self) -> None:
         if not self._ensure_stopped_for_edits() or not self._apply_current_edits():
             return
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All", "*.*")))
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json", filetypes=(("JSON", "*.json"), ("All", "*.*"))
+        )
         if path:
             self.config_path_var.set(path)
             self._write_config(Path(path))
 
     def _write_config(self, path: Path) -> None:
-        path.write_text(json.dumps({"objects": self.objects}, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps({"objects": self.objects}, indent=2) + "\n", encoding="utf-8"
+        )
         self.status_var.set(f"Saved {len(self.objects)} object(s) to {path}.")
         self._set_dirty(False)
 
@@ -503,19 +637,32 @@ class ICR2Launcher(tk.Tk):
 
     def _populate_editor(self) -> None:
         self._populating_editor = True
-        obj = self.objects[self.current_index] if self.current_index is not None and self.objects else DEFAULT_OBJECT
+        obj = (
+            self.objects[self.current_index]
+            if self.current_index is not None and self.objects
+            else DEFAULT_OBJECT
+        )
         self.name_var.set(obj.get("name", ""))
         self.mode_var.set(obj.get("mode", "ping_pong_path"))
         self.start_delay_var.set(str(obj.get("start_delay_seconds", 0)))
         start_position = obj.get("start_position")
         self.use_start_position_var.set(isinstance(start_position, dict))
-        self._set_vector_vars(self.start_position_vars, start_position if isinstance(start_position, dict) else {})
+        self._set_vector_vars(
+            self.start_position_vars,
+            start_position if isinstance(start_position, dict) else {},
+        )
         self._set_vector_vars(self.search_coord_vars, obj.get("search_coords", []))
-        self._set_vector_vars(self.spin_rate_vars, obj.get("spin_rate_deg_per_sec", [0, 0, 0]))
+        self._set_vector_vars(
+            self.spin_rate_vars, obj.get("spin_rate_deg_per_sec", [0, 0, 0])
+        )
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
-        self._set_text(self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2))
+        self._set_text(
+            self.waypoints_text, json.dumps(obj.get("waypoints", []), indent=2)
+        )
         self._refresh_waypoint_table()
-        self._set_text(self.spin_text, json.dumps(obj.get("spin_rate_deg_per_sec", [0, 0, 0])))
+        self._set_text(
+            self.spin_text, json.dumps(obj.get("spin_rate_deg_per_sec", [0, 0, 0]))
+        )
         self._update_mode_help()
         self._populating_editor = False
 
@@ -537,7 +684,9 @@ class ICR2Launcher(tk.Tk):
         for index, variable in enumerate(variables):
             variable.set(str(values[index]) if index < len(values) else "0")
 
-    def _vector_from_vars(self, variables: list[tk.StringVar], label: str) -> list[int | float]:
+    def _vector_from_vars(
+        self, variables: list[tk.StringVar], label: str
+    ) -> list[int | float]:
         values: list[int | float] = []
         for index, variable in enumerate(variables):
             raw_value = variable.get().strip()
@@ -556,11 +705,15 @@ class ICR2Launcher(tk.Tk):
             messagebox.showerror("Invalid waypoint JSON", str(exc))
             return None
         if not isinstance(waypoints, list):
-            messagebox.showerror("Invalid waypoint JSON", "waypoints must be a JSON list.")
+            messagebox.showerror(
+                "Invalid waypoint JSON", "waypoints must be a JSON list."
+            )
             return None
         return waypoints
 
-    def _write_waypoints_to_text(self, waypoints: list[dict[str, Any]], selected_index: int | None = None) -> None:
+    def _write_waypoints_to_text(
+        self, waypoints: list[dict[str, Any]], selected_index: int | None = None
+    ) -> None:
         self._set_text(self.waypoints_text, json.dumps(waypoints, indent=2))
         self._refresh_waypoint_table(selected_index)
 
@@ -619,7 +772,9 @@ class ICR2Launcher(tk.Tk):
             if committed:
                 return
             committed = True
-            self._set_waypoint_value(self.waypoint_table.index(item), column, editor.get())
+            self._set_waypoint_value(
+                self.waypoint_table.index(item), column, editor.get()
+            )
             editor.destroy()
 
         def cancel(_event: tk.Event | None = None) -> None:
@@ -659,7 +814,9 @@ class ICR2Launcher(tk.Tk):
         insert_at = self._selected_waypoint_index()
         source = (
             waypoints[insert_at]
-            if insert_at is not None and waypoints and isinstance(waypoints[insert_at], dict)
+            if insert_at is not None
+            and waypoints
+            and isinstance(waypoints[insert_at], dict)
             else DEFAULT_WAYPOINT
         )
         new_waypoint = copy.deepcopy(source)
@@ -700,7 +857,9 @@ class ICR2Launcher(tk.Tk):
     def _apply_current_edits(self, show_errors: bool = True) -> bool:
         if self.is_animating:
             if show_errors:
-                messagebox.showinfo("Animation running", "Stop animation before applying edits.")
+                messagebox.showinfo(
+                    "Animation running", "Stop animation before applying edits."
+                )
             return False
         if self.current_index is None:
             return True
@@ -708,9 +867,15 @@ class ICR2Launcher(tk.Tk):
             start_delay = float(self.start_delay_var.get())
             if start_delay < 0:
                 raise ValueError("start_delay_seconds must be non-negative")
-            search_coords = self._vector_from_vars(self.search_coord_vars, "find-object coordinate")
-            start_position_values = self._vector_from_vars(self.start_position_vars, "start position")
-            if self.use_start_position_var.get() and any(not isinstance(value, int) for value in start_position_values):
+            search_coords = self._vector_from_vars(
+                self.search_coord_vars, "find-object coordinate"
+            )
+            start_position_values = self._vector_from_vars(
+                self.start_position_vars, "start position"
+            )
+            if self.use_start_position_var.get() and any(
+                not isinstance(value, int) for value in start_position_values
+            ):
                 raise ValueError("start position coordinates must be integers")
             spin_rate = self._vector_from_vars(self.spin_rate_vars, "spin rate")
             waypoints = json.loads(self.waypoints_text.get("1.0", "end-1c"))
@@ -718,13 +883,18 @@ class ICR2Launcher(tk.Tk):
                 "name": self.name_var.get(),
                 "search_coords": search_coords,
                 "mode": self.mode_var.get(),
-                "start_delay_seconds": int(start_delay) if start_delay.is_integer() else start_delay,
+                "start_delay_seconds": (
+                    int(start_delay) if start_delay.is_integer() else start_delay
+                ),
                 "waypoints": waypoints,
                 "spin_rate_deg_per_sec": spin_rate,
             }
             if self.use_start_position_var.get():
                 updated["start_position"] = {
-                    axis: value for axis, value in zip(("x", "y", "z"), start_position_values, strict=True)
+                    axis: value
+                    for axis, value in zip(
+                        ("x", "y", "z"), start_position_values, strict=True
+                    )
                 }
             self._set_text(self.search_text, json.dumps(search_coords))
             self._set_text(self.spin_text, json.dumps(spin_rate))
@@ -756,7 +926,9 @@ class ICR2Launcher(tk.Tk):
             return
         del self.objects[self.current_index]
         self._set_dirty(True)
-        self.current_index = min(self.current_index, len(self.objects) - 1) if self.objects else None
+        self.current_index = (
+            min(self.current_index, len(self.objects) - 1) if self.objects else None
+        )
         self._refresh_object_list()
         self._populate_editor()
 
@@ -767,7 +939,9 @@ class ICR2Launcher(tk.Tk):
         if errors:
             for error in errors:
                 log_error("Main", f"Config validation failed: {error}")
-            messagebox.showerror("Config validation error", "\n".join(f"• {error}" for error in errors))
+            messagebox.showerror(
+                "Config validation error", "\n".join(f"• {error}" for error in errors)
+            )
             return
         log_info("Main", f"Config validation passed for {len(self.objects)} object(s).")
         try:
@@ -778,11 +952,27 @@ class ICR2Launcher(tk.Tk):
             log_error("Main", f"Invalid FPS value: {self.fps_var.get()!r}.")
             messagebox.showerror("Invalid FPS", "FPS must be a positive number.")
             return
-        log_info("Main", f"Starting animation from config={self.config_path_var.get()!r}, version={self.version_var.get()}, fps={fps:g}, objects={len(self.objects)}.")
-        self.service = AnimatorService(version=self.version_var.get(), verbose=True, fps=fps)
+        window_keywords = self._window_keywords_or_show_error()
+        if window_keywords is None:
+            return
+        self.app_settings.set_window_keywords_for_version(
+            self.version_var.get(), window_keywords
+        )
+        log_info(
+            "Main",
+            f"Starting animation from config={self.config_path_var.get()!r}, version={self.version_var.get()}, fps={fps:g}, objects={len(self.objects)}, window_keywords={window_keywords}.",
+        )
+        self.service = AnimatorService(
+            version=self.version_var.get(),
+            verbose=True,
+            fps=fps,
+            window_keywords=window_keywords,
+        )
         self.status_var.set("Starting animation...")
         self._set_running_state(True)
-        self.worker = threading.Thread(target=self._run_service, args=(list(self.objects),), daemon=True)
+        self.worker = threading.Thread(
+            target=self._run_service, args=(list(self.objects),), daemon=True
+        )
         self.worker.start()
 
     def _run_service(self, objects: list[dict[str, Any]]) -> None:
@@ -827,11 +1017,30 @@ class ICR2Launcher(tk.Tk):
         self.is_animating = running
         edit_state = "disabled" if running else "normal"
         readonly_state = "disabled" if running else "readonly"
-        for widget in (self.config_entry, self.fps_entry, self.name_entry, self.start_delay_entry, self.search_text, self.waypoints_text, self.spin_text,
-                       self.start_position_check, *self.start_position_entries, *self.search_entries, *self.spin_entries,
-                       self.load_button, self.save_button, self.save_as_button, self.add_button,
-                       self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
-                       self.move_waypoint_up_button, self.move_waypoint_down_button, self.tooltips_check):
+        for widget in (
+            self.config_entry,
+            self.fps_entry,
+            self.window_keywords_entry,
+            self.name_entry,
+            self.start_delay_entry,
+            self.search_text,
+            self.waypoints_text,
+            self.spin_text,
+            self.start_position_check,
+            *self.start_position_entries,
+            *self.search_entries,
+            *self.spin_entries,
+            self.load_button,
+            self.save_button,
+            self.save_as_button,
+            self.add_button,
+            self.remove_button,
+            self.add_waypoint_button,
+            self.remove_waypoint_button,
+            self.move_waypoint_up_button,
+            self.move_waypoint_down_button,
+            self.tooltips_check,
+        ):
             widget.configure(state=edit_state)
         self.version_combo.configure(state=readonly_state)
         self.mode_combo.configure(state=readonly_state)
@@ -844,7 +1053,9 @@ class ICR2Launcher(tk.Tk):
 
     def _ensure_stopped_for_edits(self) -> bool:
         if self.is_animating:
-            messagebox.showinfo("Animation running", "Stop animation before editing the config.")
+            messagebox.showinfo(
+                "Animation running", "Stop animation before editing the config."
+            )
             return False
         return True
 
