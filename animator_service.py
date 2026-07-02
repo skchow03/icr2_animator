@@ -21,13 +21,24 @@ from icr2_versions import DEFAULT_ICR2_VERSION, normalize_version
 class AnimatorService:
     """Coordinate object animation runtime state and worker threads."""
 
-    def __init__(self, version: str = DEFAULT_ICR2_VERSION, verbose: bool = True, fps: float = 60):
+    def __init__(
+        self,
+        version: str = DEFAULT_ICR2_VERSION,
+        verbose: bool = True,
+        fps: float = 60,
+        window_keywords: list[str] | tuple[str, ...] | None = None,
+    ):
         self.version = normalize_version(version)
         self.verbose = verbose
         self.fps = fps
+        self.window_keywords = (
+            tuple(window_keywords) if window_keywords is not None else None
+        )
         self.animator: ICR2ObjectAnimator | None = None
         self.threads: list[threading.Thread] = []
-        self._active_objects: list[tuple[str, int, tuple[int, int, int, int, int, int]]] = []
+        self._active_objects: list[
+            tuple[str, int, tuple[int, int, int, int, int, int]]
+        ] = []
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._stopping = False
@@ -57,9 +68,17 @@ class AnimatorService:
             self.threads = []
             self._active_objects = []
             if self.verbose:
-                log_info("Main", f"Starting animation: version={self.version}, fps={self.fps:g}, objects={len(objects)}")
-            self.animator = ICR2ObjectAnimator(version=self.version, verbose=self.verbose, fps=self.fps)
-            self.animator.connect()
+                log_info(
+                    "Main",
+                    f"Starting animation: version={self.version}, fps={self.fps:g}, objects={len(objects)}",
+                )
+            self.animator = ICR2ObjectAnimator(
+                version=self.version,
+                verbose=self.verbose,
+                fps=self.fps,
+                window_keywords=self.window_keywords,
+            )
+            self.animator.connect(self.window_keywords)
 
             started_count = 0
             for obj in objects:
@@ -67,7 +86,10 @@ class AnimatorService:
                     started_count += 1
             if self.verbose:
                 if started_count:
-                    log_info("Main", f"Started {started_count}/{len(objects)} configured object(s).")
+                    log_info(
+                        "Main",
+                        f"Started {started_count}/{len(objects)} configured object(s).",
+                    )
                 else:
                     log_warn("Main", "No configured objects were started.")
 
@@ -83,7 +105,9 @@ class AnimatorService:
         if self.verbose:
             log_info("Main", "Stop requested.")
         if self.verbose and threads:
-            log_info("Main", f"Waiting for {len(threads)} animation thread(s) to exit...")
+            log_info(
+                "Main", f"Waiting for {len(threads)} animation thread(s) to exit..."
+            )
         deadline = time.monotonic() + 2.0
         for thread in threads:
             remaining = deadline - time.monotonic()
@@ -92,7 +116,10 @@ class AnimatorService:
             thread.join(timeout=remaining)
         for thread in threads:
             if thread.is_alive():
-                log_warn("Main", f"Animation thread {thread.name!r} did not exit before the shutdown deadline.")
+                log_warn(
+                    "Main",
+                    f"Animation thread {thread.name!r} did not exit before the shutdown deadline.",
+                )
 
         with self._lock:
             self._reset_active_objects()
@@ -121,7 +148,9 @@ class AnimatorService:
                     log_warn("Main", "DOSBox closed, shutting down animator.")
                     break
                 if not self.is_running():
-                    log_info("Main", "All animation threads exited, shutting down animator.")
+                    log_info(
+                        "Main", "All animation threads exited, shutting down animator."
+                    )
                     break
                 time.sleep(poll_interval)
         finally:
@@ -134,31 +163,61 @@ class AnimatorService:
         name = obj["name"]
         search_coords = tuple(obj["search_coords"])
         if self.verbose:
-            log_info("Animator", f"Searching for {name!r} at search_coords={search_coords}.")
+            log_info(
+                "Animator", f"Searching for {name!r} at search_coords={search_coords}."
+            )
         rel_addr = self.animator.find_coordinates_bulk(search_coords, (0, 0xF0000000))
         if rel_addr is None:
-            log_warn("Animator", f"{name!r} not found at search_coords={search_coords}.")
+            log_warn(
+                "Animator", f"{name!r} not found at search_coords={search_coords}."
+            )
             return False
 
         start_vals = self.animator.read_object6(rel_addr)
-        animation_start_vals = self._animation_start_values(start_vals, obj.get("start_position"))
+        animation_start_vals = self._animation_start_values(
+            start_vals, obj.get("start_position")
+        )
         mode = obj["mode"]
         self._active_objects.append((name, rel_addr, start_vals))
         if self.verbose:
             abs_addr = self.animator.memory.exe_base + rel_addr
-            log_info("Animator", f"Found {name!r} at rel=0x{rel_addr:X}, abs=0x{abs_addr:X}, start_values={start_vals}.")
+            log_info(
+                "Animator",
+                f"Found {name!r} at rel=0x{rel_addr:X}, abs=0x{abs_addr:X}, start_values={start_vals}.",
+            )
             if animation_start_vals != start_vals:
-                log_info("Animator", f"Teleporting {name!r} from captured start values to configured start_position={animation_start_vals}.")
+                log_info(
+                    "Animator",
+                    f"Teleporting {name!r} from captured start values to configured start_position={animation_start_vals}.",
+                )
 
         if mode == "ping_pong_path":
             target = self.animator.animate_ping_pong_path
-            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (
+                rel_addr,
+                animation_start_vals,
+                obj["waypoints"],
+                obj["name"],
+                self._stop_event,
+            )
         elif mode == "return_to_start":
             target = self.animator.animate_return_to_start
-            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (
+                rel_addr,
+                animation_start_vals,
+                obj["waypoints"],
+                obj["name"],
+                self._stop_event,
+            )
         elif mode == "reset_loop":
             target = self.animator.animate_reset_loop
-            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (
+                rel_addr,
+                animation_start_vals,
+                obj["waypoints"],
+                obj["name"],
+                self._stop_event,
+            )
         elif mode == "rotate_in_place":
             target = self.animator.animate_rotate_in_place
             args = (
@@ -176,7 +235,10 @@ class AnimatorService:
             try:
                 self.animator.write_object6(rel_addr, animation_start_vals)
             except SystemExit:
-                log_error("Animator", f"Could not teleport {name!r} to configured start_position; DOSBox is no longer available.")
+                log_error(
+                    "Animator",
+                    f"Could not teleport {name!r} to configured start_position; DOSBox is no longer available.",
+                )
                 return False
 
         start_delay_seconds = float(obj.get("start_delay_seconds", 0) or 0)
@@ -192,7 +254,10 @@ class AnimatorService:
                 detail = f"spin_rate={tuple(obj['spin_rate_deg_per_sec'])}"
             else:
                 detail = f"waypoints={len(obj['waypoints'])}"
-            log_info("Animator", f"Started {name!r}: mode={mode}, {detail}, rel=0x{rel_addr:X}, delay={start_delay_seconds:g}s.")
+            log_info(
+                "Animator",
+                f"Started {name!r}: mode={mode}, {detail}, rel=0x{rel_addr:X}, delay={start_delay_seconds:g}s.",
+            )
         return True
 
     def _animation_start_values(
@@ -212,18 +277,27 @@ class AnimatorService:
         if self.animator:
             for index, key in enumerate(("rot_x", "rot_y", "rot_z"), start=3):
                 if key in start_position:
-                    values[index] = self.animator.degrees_to_units(float(start_position[key]))
+                    values[index] = self.animator.degrees_to_units(
+                        float(start_position[key])
+                    )
 
         return tuple(values)
 
-    def _run_after_start_delay(self, delay_seconds: float, target, args: tuple, name: str) -> None:
+    def _run_after_start_delay(
+        self, delay_seconds: float, target, args: tuple, name: str
+    ) -> None:
         """Wait for an object's configured start delay, then run its animation loop."""
         if delay_seconds > 0:
             if self.verbose:
-                log_info("Animator", f"Waiting {delay_seconds:g}s before starting {name!r}.")
+                log_info(
+                    "Animator", f"Waiting {delay_seconds:g}s before starting {name!r}."
+                )
             if self._stop_event.wait(delay_seconds):
                 if self.verbose:
-                    log_info("Animator", f"Start delay cancelled for {name!r} because animation was stopped.")
+                    log_info(
+                        "Animator",
+                        f"Start delay cancelled for {name!r} because animation was stopped.",
+                    )
                 return
             if self.verbose:
                 log_info("Animator", f"Delay complete; starting {name!r}.")
@@ -238,13 +312,22 @@ class AnimatorService:
             return
 
         if self.verbose and self._active_objects:
-            log_info("Main", f"Restoring {len(self._active_objects)} object(s) to captured start values...")
+            log_info(
+                "Main",
+                f"Restoring {len(self._active_objects)} object(s) to captured start values...",
+            )
 
         for name, rel_addr, start_vals in self._active_objects:
             try:
                 animator.write_object6(rel_addr, start_vals)
                 if self.verbose:
-                    log_info("Main", f"Restored {name!r} to start values at rel=0x{rel_addr:X}.")
+                    log_info(
+                        "Main",
+                        f"Restored {name!r} to start values at rel=0x{rel_addr:X}.",
+                    )
             except SystemExit:
-                log_error("Main", f"Failed to restore {name!r} at rel=0x{rel_addr:X}; DOSBox is no longer available.")
+                log_error(
+                    "Main",
+                    f"Failed to restore {name!r} at rel=0x{rel_addr:X}; DOSBox is no longer available.",
+                )
                 return
