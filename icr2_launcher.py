@@ -798,10 +798,30 @@ class ICR2Launcher(tk.Tk):
 
     def _stop_animation(self) -> None:
         self.status_var.set("Stopping animation...")
+        self.stop_button.configure(state="disabled")
         log_info("Main", "Stop animation requested from launcher.")
-        if self.service:
-            self.service.stop()
+
+        service = self.service
+        if not service:
+            self._set_running_state(False)
+            return
+
+        def stop_in_background() -> None:
+            error: Exception | None = None
+            try:
+                service.stop()
+            except Exception as exc:
+                error = exc
+                log_error("Main", f"Animator stop error: {exc}")
+            finally:
+                self.after(0, lambda: self._finish_stop(error))
+
+        threading.Thread(target=stop_in_background, daemon=True).start()
+
+    def _finish_stop(self, error: Exception | None = None) -> None:
         self._set_running_state(False)
+        if error:
+            messagebox.showerror("Animator stop error", str(error))
 
     def _set_running_state(self, running: bool) -> None:
         self.is_animating = running
