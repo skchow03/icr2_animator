@@ -13,7 +13,8 @@ Object fields that are lists (``search_coords``, ``waypoints``, and
 config files can be loaded and saved without format migration. Waypoints also
 have a table editor for common add/remove/reorder/cell-edit operations. Each
 object can also define ``start_delay_seconds`` to delay its animation after the
-user clicks Start animation.
+user clicks Start animation, and ``start_position`` to immediately teleport from
+the found memory/default position before animating.
 """
 
 from __future__ import annotations
@@ -57,13 +58,15 @@ TOOLTIPS = {
     "name": "Friendly name used in the object list, console messages, and validation errors.",
     "mode": "How this object repeats. See the mode explanation below for the selected mode.",
     "start_delay": "Seconds to wait after Start animation before this object begins moving. Use this to stagger multiple objects.",
+    "use_start_position": "When enabled, Start animation instantly teleports the object from its found/default memory location to these coordinates before movement begins. Stop restores the original found location.",
+    "start_position": "Optional animation start coordinates in integer 1/500-inch units. Loops use this as their start instead of the found memory location.",
     "search_coords": "The object's current in-game x/y/z coordinates used to find its memory record when animation starts. Coordinates are integer 1/500-inch units.",
     "waypoints": "Path targets for movement modes. x/y/z are 1/500-inch units; speed_mph controls travel to that row; rot_x/rot_y/rot_z are target angles in degrees.",
     "waypoint_buttons": "Add duplicates the selected waypoint (or a default point), Remove deletes the selected row, and Move changes playback order.",
     "spin_rate": "Rotation speeds for rotate_in_place only, in degrees per second around pitch, yaw, and roll axes. Positive/negative values spin opposite directions.",
     "tooltips_toggle": "Turn hover help popups on or off. The setting only affects tooltips, not the always-visible help text.",
-    "start": "Validates the config, connects to DOSBox, searches for each object, and starts its animation thread.",
-    "stop": "Stops all animations and restores discovered objects to the positions/rotations captured when Start animation was clicked.",
+    "start": "Validates the config, connects to DOSBox, searches for each object, teleports any configured start_position, and starts its animation thread.",
+    "stop": "Stops all animations and restores discovered objects to the positions/rotations captured before any start_position teleport.",
 }
 
 MODE_DESCRIPTIONS = {
@@ -76,7 +79,7 @@ MODE_DESCRIPTIONS = {
 GENERAL_HELP = (
     "Coordinates are integer 1/500-inch game units. Rotation waypoint fields are degrees, while the animator converts them to ICR2 memory units. "
     "For movement modes, each waypoint row is a destination and its speed_mph is the speed used while travelling to that destination. "
-    "For rotate_in_place, use spin rate instead of waypoints. Stop animation restores found objects to their starting memory values."
+    "For rotate_in_place, use spin rate instead of waypoints. Enable Start position to teleport an object from its found/default memory location before animating; loop resets use that start position, while Stop restores found objects to their original memory values."
 )
 
 
@@ -167,6 +170,8 @@ class ICR2Launcher(tk.Tk):
         self.name_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="ping_pong_path")
         self.start_delay_var = tk.StringVar(value="0")
+        self.use_start_position_var = tk.BooleanVar(value=False)
+        self.start_position_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.search_coord_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.spin_rate_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
@@ -230,7 +235,7 @@ class ICR2Launcher(tk.Tk):
         editor = ttk.LabelFrame(root, text="Object")
         editor.grid(row=1, column=1, sticky="nsew")
         editor.columnconfigure(1, weight=1)
-        editor.rowconfigure(5, weight=1)
+        editor.rowconfigure(6, weight=1)
 
         name_label = ttk.Label(editor, text="Object name")
         name_label.grid(row=0, column=0, sticky="nw", padx=8, pady=6)
@@ -247,16 +252,27 @@ class ICR2Launcher(tk.Tk):
         delay_label.grid(row=3, column=0, sticky="nw", padx=8, pady=6)
         self.start_delay_entry = ttk.Entry(editor, textvariable=self.start_delay_var)
         self.start_delay_entry.grid(row=3, column=1, sticky="ew", padx=8, pady=6)
+        self.start_position_check = ttk.Checkbutton(
+            editor,
+            text="Teleport to start position",
+            variable=self.use_start_position_var,
+            command=self._auto_apply_current_edits,
+        )
+        self.start_position_check.grid(row=4, column=0, sticky="nw", padx=8, pady=6)
+        start_position_frame = ttk.Frame(editor)
+        start_position_frame.grid(row=4, column=1, sticky="ew", padx=8, pady=6)
+        self.start_position_entries = self._build_vector_inputs(start_position_frame, self.start_position_vars, ("x", "y", "z"))
+
         search_label = ttk.Label(editor, text="Find object at")
-        search_label.grid(row=4, column=0, sticky="nw", padx=8, pady=6)
+        search_label.grid(row=5, column=0, sticky="nw", padx=8, pady=6)
         search_frame = ttk.Frame(editor)
-        search_frame.grid(row=4, column=1, sticky="ew", padx=8, pady=6)
+        search_frame.grid(row=5, column=1, sticky="ew", padx=8, pady=6)
         self.search_entries = self._build_vector_inputs(search_frame, self.search_coord_vars, ("x", "y", "z"))
 
         waypoints_label = ttk.Label(editor, text="Waypoints")
-        waypoints_label.grid(row=5, column=0, sticky="nw", padx=8, pady=6)
+        waypoints_label.grid(row=6, column=0, sticky="nw", padx=8, pady=6)
         waypoint_area = ttk.Frame(editor)
-        waypoint_area.grid(row=5, column=1, sticky="nsew", padx=8, pady=6)
+        waypoint_area.grid(row=6, column=1, sticky="nsew", padx=8, pady=6)
         waypoint_area.columnconfigure(0, weight=1)
         waypoint_area.rowconfigure(1, weight=1)
         ttk.Label(
@@ -266,7 +282,7 @@ class ICR2Launcher(tk.Tk):
         self.waypoints_text = tk.Text(editor, height=8, wrap="none")
         self.waypoints_text.bind("<FocusOut>", lambda _event: self._refresh_waypoint_table())
         waypoint_tools = ttk.Frame(editor)
-        waypoint_tools.grid(row=6, column=1, sticky="ew", padx=8, pady=(0, 6))
+        waypoint_tools.grid(row=7, column=1, sticky="ew", padx=8, pady=(0, 6))
         self.add_waypoint_button = ttk.Button(waypoint_tools, text="Add waypoint", command=self._add_waypoint)
         self.add_waypoint_button.grid(row=0, column=0, padx=(0, 4))
         self.remove_waypoint_button = ttk.Button(waypoint_tools, text="Remove waypoint", command=self._remove_waypoint)
@@ -286,15 +302,15 @@ class ICR2Launcher(tk.Tk):
         self.waypoint_table.bind("<Double-1>", self._edit_waypoint_cell)
 
         spin_label = ttk.Label(editor, text="Spin rate (deg/sec)")
-        spin_label.grid(row=7, column=0, sticky="nw", padx=8, pady=6)
+        spin_label.grid(row=8, column=0, sticky="nw", padx=8, pady=6)
         spin_frame = ttk.Frame(editor)
-        spin_frame.grid(row=7, column=1, sticky="ew", padx=8, pady=6)
+        spin_frame.grid(row=8, column=1, sticky="ew", padx=8, pady=6)
         self.spin_entries = self._build_vector_inputs(spin_frame, self.spin_rate_vars, ("pitch", "yaw", "roll"))
 
         self.search_text = tk.Text(editor, height=2, wrap="none")
         self.spin_text = tk.Text(editor, height=2, wrap="none")
         self.general_help_label = ttk.Label(editor, text=GENERAL_HELP, wraplength=760, foreground="#444")
-        self.general_help_label.grid(row=8, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
+        self.general_help_label.grid(row=9, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
         for widget in (self.name_entry, self.start_delay_entry, self.waypoints_text):
             self._bind_auto_apply(widget)
         console = ttk.LabelFrame(root, text="Console messages")
@@ -339,6 +355,8 @@ class ICR2Launcher(tk.Tk):
                 self.mode_help_label: "This explanation changes when you choose a different animation mode.",
                 delay_label: TOOLTIPS["start_delay"],
                 self.start_delay_entry: TOOLTIPS["start_delay"],
+                self.start_position_check: TOOLTIPS["use_start_position"],
+                start_position_frame: TOOLTIPS["start_position"],
                 search_label: TOOLTIPS["search_coords"],
                 search_frame: TOOLTIPS["search_coords"],
                 waypoints_label: TOOLTIPS["waypoints"],
@@ -352,11 +370,11 @@ class ICR2Launcher(tk.Tk):
                 self.stop_button: TOOLTIPS["stop"],
             }
         )
-        for entry in (*self.search_entries, *self.spin_entries):
+        for entry in (*self.start_position_entries, *self.search_entries, *self.spin_entries):
             self.tooltips.append(
                 ToolTip(
                     entry,
-                    TOOLTIPS["search_coords"] if entry in self.search_entries else TOOLTIPS["spin_rate"],
+                    TOOLTIPS["start_position"] if entry in self.start_position_entries else TOOLTIPS["search_coords"] if entry in self.search_entries else TOOLTIPS["spin_rate"],
                     enabled_callback=self.tooltips_enabled_var.get,
                 )
             )
@@ -489,6 +507,9 @@ class ICR2Launcher(tk.Tk):
         self.name_var.set(obj.get("name", ""))
         self.mode_var.set(obj.get("mode", "ping_pong_path"))
         self.start_delay_var.set(str(obj.get("start_delay_seconds", 0)))
+        start_position = obj.get("start_position")
+        self.use_start_position_var.set(isinstance(start_position, dict))
+        self._set_vector_vars(self.start_position_vars, start_position if isinstance(start_position, dict) else {})
         self._set_vector_vars(self.search_coord_vars, obj.get("search_coords", []))
         self._set_vector_vars(self.spin_rate_vars, obj.get("spin_rate_deg_per_sec", [0, 0, 0]))
         self._set_text(self.search_text, json.dumps(obj.get("search_coords", [])))
@@ -509,7 +530,9 @@ class ICR2Launcher(tk.Tk):
         widget.insert("1.0", value)
 
     def _set_vector_vars(self, variables: list[tk.StringVar], values: Any) -> None:
-        if not isinstance(values, list):
+        if isinstance(values, dict):
+            values = [values.get(axis, 0) for axis in ("x", "y", "z")]
+        elif not isinstance(values, list):
             values = []
         for index, variable in enumerate(variables):
             variable.set(str(values[index]) if index < len(values) else "0")
@@ -686,6 +709,9 @@ class ICR2Launcher(tk.Tk):
             if start_delay < 0:
                 raise ValueError("start_delay_seconds must be non-negative")
             search_coords = self._vector_from_vars(self.search_coord_vars, "find-object coordinate")
+            start_position_values = self._vector_from_vars(self.start_position_vars, "start position")
+            if self.use_start_position_var.get() and any(not isinstance(value, int) for value in start_position_values):
+                raise ValueError("start position coordinates must be integers")
             spin_rate = self._vector_from_vars(self.spin_rate_vars, "spin rate")
             waypoints = json.loads(self.waypoints_text.get("1.0", "end-1c"))
             updated = {
@@ -696,6 +722,10 @@ class ICR2Launcher(tk.Tk):
                 "waypoints": waypoints,
                 "spin_rate_deg_per_sec": spin_rate,
             }
+            if self.use_start_position_var.get():
+                updated["start_position"] = {
+                    axis: value for axis, value in zip(("x", "y", "z"), start_position_values, strict=True)
+                }
             self._set_text(self.search_text, json.dumps(search_coords))
             self._set_text(self.spin_text, json.dumps(spin_rate))
         except json.JSONDecodeError as exc:
@@ -778,7 +808,7 @@ class ICR2Launcher(tk.Tk):
         edit_state = "disabled" if running else "normal"
         readonly_state = "disabled" if running else "readonly"
         for widget in (self.config_entry, self.fps_entry, self.name_entry, self.start_delay_entry, self.search_text, self.waypoints_text, self.spin_text,
-                       *self.search_entries, *self.spin_entries,
+                       self.start_position_check, *self.start_position_entries, *self.search_entries, *self.spin_entries,
                        self.load_button, self.save_button, self.save_as_button, self.add_button,
                        self.remove_button, self.add_waypoint_button, self.remove_waypoint_button,
                        self.move_waypoint_up_button, self.move_waypoint_down_button, self.tooltips_check):

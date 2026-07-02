@@ -120,26 +120,29 @@ class AnimatorService:
             return False
 
         start_vals = self.animator.read_object6(rel_addr)
+        animation_start_vals = self._animation_start_values(start_vals, obj.get("start_position"))
         mode = obj["mode"]
         self._active_objects.append((name, rel_addr, start_vals))
         if self.verbose:
             abs_addr = self.animator.memory.exe_base + rel_addr
             log_info("Animator", f"Found {name!r} at rel=0x{rel_addr:X}, abs=0x{abs_addr:X}, start_values={start_vals}.")
+            if animation_start_vals != start_vals:
+                log_info("Animator", f"Teleporting {name!r} from captured start values to configured start_position={animation_start_vals}.")
 
         if mode == "ping_pong_path":
             target = self.animator.animate_ping_pong_path
-            args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
         elif mode == "return_to_start":
             target = self.animator.animate_return_to_start
-            args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
         elif mode == "reset_loop":
             target = self.animator.animate_reset_loop
-            args = (rel_addr, start_vals, obj["waypoints"], obj["name"], self._stop_event)
+            args = (rel_addr, animation_start_vals, obj["waypoints"], obj["name"], self._stop_event)
         elif mode == "rotate_in_place":
             target = self.animator.animate_rotate_in_place
             args = (
                 rel_addr,
-                start_vals,
+                animation_start_vals,
                 tuple(obj["spin_rate_deg_per_sec"]),
                 obj["name"],
                 self._stop_event,
@@ -147,6 +150,13 @@ class AnimatorService:
         else:
             log_error("Animator", f"Unknown mode {mode!r} for {name!r}.")
             return False
+
+        if animation_start_vals != start_vals:
+            try:
+                self.animator.write_object6(rel_addr, animation_start_vals)
+            except SystemExit:
+                log_error("Animator", f"Could not teleport {name!r} to configured start_position; DOSBox is no longer available.")
+                return False
 
         start_delay_seconds = float(obj.get("start_delay_seconds", 0) or 0)
         thread = threading.Thread(
@@ -163,6 +173,27 @@ class AnimatorService:
                 detail = f"waypoints={len(obj['waypoints'])}"
             log_info("Animator", f"Started {name!r}: mode={mode}, {detail}, rel=0x{rel_addr:X}, delay={start_delay_seconds:g}s.")
         return True
+
+    def _animation_start_values(
+        self,
+        memory_start: tuple[int, int, int, int, int, int],
+        start_position: Any,
+    ) -> tuple[int, int, int, int, int, int]:
+        """Return the animation start values after applying an optional start_position override."""
+        if not isinstance(start_position, dict):
+            return memory_start
+
+        values = list(memory_start)
+        for index, key in enumerate(("x", "y", "z")):
+            if key in start_position:
+                values[index] = int(start_position[key])
+
+        if self.animator:
+            for index, key in enumerate(("rot_x", "rot_y", "rot_z"), start=3):
+                if key in start_position:
+                    values[index] = self.animator.degrees_to_units(float(start_position[key]))
+
+        return tuple(values)
 
     def _run_after_start_delay(self, delay_seconds: float, target, args: tuple, name: str) -> None:
         """Wait for an object's configured start delay, then run its animation loop."""
