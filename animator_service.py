@@ -71,10 +71,18 @@ class AnimatorService:
             log_info("Main", "Stop requested.")
         self._stop_event.set()
 
-        if self.verbose and self.threads:
-            log_info("Main", f"Waiting for {len(self.threads)} animation thread(s) to exit...")
-        for thread in list(self.threads):
-            thread.join(timeout=2)
+        threads = list(self.threads)
+        if self.verbose and threads:
+            log_info("Main", f"Waiting for {len(threads)} animation thread(s) to exit...")
+        deadline = time.monotonic() + 2.0
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
+        for thread in threads:
+            if thread.is_alive():
+                log_warn("Main", f"Animation thread {thread.name!r} did not exit before the shutdown deadline.")
 
         self._reset_active_objects()
 
