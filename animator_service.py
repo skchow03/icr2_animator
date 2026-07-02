@@ -30,6 +30,8 @@ class AnimatorService:
         self._active_objects: list[tuple[str, int, tuple[int, int, int, int, int, int]]] = []
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._stopping = False
+        self._stopped = True
 
     def load_objects(self, path: str) -> list[dict[str, Any]]:
         """Load object animation definitions from a JSON configuration file."""
@@ -45,8 +47,12 @@ class AnimatorService:
     def start(self, objects: list[dict[str, Any]]):
         """Connect to DOSBox, discover configured objects, and start animations."""
         with self._lock:
+            if self._stopping:
+                raise RuntimeError("AnimatorService is stopping")
             if self.is_running():
                 raise RuntimeError("AnimatorService is already running")
+            self._stopping = False
+            self._stopped = False
             self._stop_event.clear()
             self.threads = []
             self._active_objects = []
@@ -67,11 +73,15 @@ class AnimatorService:
 
     def stop(self):
         """Signal animation loops to stop and release DOSBox resources."""
+        with self._lock:
+            if self._stopping or self._stopped:
+                return
+            self._stopping = True
+            self._stop_event.set()
+            threads = list(self.threads)
+
         if self.verbose:
             log_info("Main", "Stop requested.")
-        self._stop_event.set()
-
-        threads = list(self.threads)
         if self.verbose and threads:
             log_info("Main", f"Waiting for {len(threads)} animation thread(s) to exit...")
         deadline = time.monotonic() + 2.0
@@ -84,14 +94,17 @@ class AnimatorService:
             if thread.is_alive():
                 log_warn("Main", f"Animation thread {thread.name!r} did not exit before the shutdown deadline.")
 
-        self._reset_active_objects()
+        with self._lock:
+            self._reset_active_objects()
 
-        if self.animator:
-            self.animator.disconnect()
-            self.animator = None
+            if self.animator:
+                self.animator.disconnect()
+                self.animator = None
 
-        self.threads = []
-        self._active_objects = []
+            self.threads = []
+            self._active_objects = []
+            self._stopping = False
+            self._stopped = True
         if self.verbose:
             log_info("Main", "Stop complete.")
 
