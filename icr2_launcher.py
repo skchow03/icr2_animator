@@ -176,7 +176,7 @@ class ICR2Launcher(tk.Tk):
         self.spin_rate_vars = [tk.StringVar(value="0") for _ in range(3)]
         self.status_var = tk.StringVar(value="Load or edit a config, then start animation.")
         self.dirty_status_var = tk.StringVar(value="Saved")
-        self.tooltips_enabled_var = tk.BooleanVar(value=True)
+        self.tooltips_enabled_var = tk.BooleanVar(value=False)
         self.tooltips: list[ToolTip] = []
 
         self._build_widgets()
