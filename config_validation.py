@@ -8,6 +8,8 @@ from typing import Any
 VALID_MODES = {"ping_pong_path", "return_to_start", "reset_loop", "rotate_in_place"}
 REQUIRED_WAYPOINT_COORDS = ("x", "y", "z")
 OPTIONAL_WAYPOINT_NUMBERS = ("rot_x", "rot_y", "rot_z")
+START_POSITION_COORDS = ("x", "y", "z")
+START_POSITION_ROTATIONS = ("rot_x", "rot_y", "rot_z")
 
 
 def _is_numeric(value: Any) -> bool:
@@ -48,6 +50,9 @@ def validate_object_config(objects: list[dict]) -> list[str]:
             if not _is_numeric(delay) or delay < 0:
                 errors.append(f"{label} start_delay_seconds must be a non-negative number")
 
+        if "start_position" in obj:
+            _validate_start_position(obj["start_position"], label, errors)
+
         if mode not in VALID_MODES:
             errors.append(f"{label} mode must be one of {sorted(VALID_MODES)}")
             continue
@@ -58,6 +63,22 @@ def validate_object_config(objects: list[dict]) -> list[str]:
             _validate_spin_rate(obj.get("spin_rate_deg_per_sec"), label, errors)
 
     return errors
+
+
+def _validate_start_position(start_position: Any, label: str, errors: list[str]) -> None:
+    if not isinstance(start_position, dict):
+        errors.append(f"{label} start_position must be an object with x/y/z coordinates")
+        return
+
+    for key in START_POSITION_COORDS:
+        if key not in start_position:
+            errors.append(f"{label} start_position {key} is required")
+        elif not isinstance(start_position[key], int) or isinstance(start_position[key], bool):
+            errors.append(f"{label} start_position {key} must be an integer")
+
+    for key in START_POSITION_ROTATIONS:
+        if key in start_position and not _is_numeric(start_position[key]):
+            errors.append(f"{label} start_position {key} must be numeric")
 
 
 def _validate_waypoints(waypoints: Any, label: str, errors: list[str]) -> None:
