@@ -15,7 +15,7 @@ from typing import Any
 from icr2_logging import log_error, log_info, log_warn
 
 from icr2_object_animator import ICR2ObjectAnimator
-from icr2_versions import DEFAULT_ICR2_VERSION, normalize_version
+from icr2_versions import DEFAULT_ICR2_VERSION, ICR2_VERSION_CONFIGS, normalize_version
 
 
 class AnimatorService:
@@ -166,7 +166,9 @@ class AnimatorService:
             log_info(
                 "Animator", f"Searching for {name!r} at search_coords={search_coords}."
             )
-        rel_addr = self.animator.find_coordinates_bulk(search_coords, (0, 0xF0000000))
+        rel_addr = self.animator.find_coordinates_bulk(
+            search_coords, ICR2_VERSION_CONFIGS[self.animator.version].object_search_range
+        )
         if rel_addr is None:
             log_warn(
                 "Animator", f"{name!r} not found at search_coords={search_coords}."

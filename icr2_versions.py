@@ -12,6 +12,7 @@ class ICR2VersionConfig:
     window_keywords: tuple[str, ...]
     signature_bytes: bytes
     signature_offset: int
+    object_search_range: tuple[int, int] = (0, 0x02000000)
 
 
 _LICENSE_WITH_BOB_SIGNATURE = bytes.fromhex(

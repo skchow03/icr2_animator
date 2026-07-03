@@ -21,6 +21,7 @@ import struct
 import threading
 from typing import Tuple, List, Dict, Any, Optional, Sequence
 from icr2_logging import log_debug, log_error, log_info, log_warn
+from icr2_memory import iter_readable_regions
 from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS, normalize_version
 
 
@@ -385,28 +386,51 @@ class ICR2ObjectAnimator:
                 f"Scanning {mb:.1f} MB for target coordinates {target_coords}.",
             )
 
-        offset = start_offset
-        overlap = 12
+        if not self.memory or not self.memory.pm or self.memory.exe_base is None:
+            raise RuntimeError("Animator is not connected")
 
-        while offset < end_offset:
-            read_size = min(chunk_size, end_offset - offset)
-            abs_addr = self.memory.exe_base + offset
-            try:
-                blob = self.memory.pm.read_bytes(abs_addr, read_size)
-            except Exception:
-                offset += max(read_size - overlap, 1)
+        search_start = self.memory.exe_base + start_offset
+        search_end = self.memory.exe_base + end_offset
+        overlap = max(0, len(pattern) - 1)
+
+        for region_base, region_size in iter_readable_regions(
+            self.memory.pm, search_start
+        ):
+            region_end = region_base + region_size
+            if region_base >= search_end:
+                break
+            if region_end <= search_start:
                 continue
 
-            idx = blob.find(pattern)
-            if idx != -1:
-                rel_addr = offset + idx
-                if self.verbose:
-                    log_debug(
-                        "Animator", f"Found coordinates at rel offset 0x{rel_addr:X}."
-                    )
-                return rel_addr
+            chunk_start = max(region_base, search_start)
+            chunk_end = min(region_end, search_end)
+            leftover = b""
+            pos = chunk_start
 
-            offset += max(read_size - overlap, 1)
+            while pos < chunk_end:
+                read_size = min(chunk_size, chunk_end - pos)
+                try:
+                    chunk = self.memory.pm.read_bytes(pos, read_size)
+                except Exception:
+                    pos += read_size
+                    leftover = b""
+                    continue
+
+                blob = leftover + chunk
+                idx = blob.find(pattern)
+                if idx != -1:
+                    abs_addr = (pos - len(leftover)) + idx
+                    rel_addr = abs_addr - self.memory.exe_base
+                    if self.verbose:
+                        log_debug(
+                            "Animator",
+                            f"Found coordinates at rel offset 0x{rel_addr:X}.",
+                        )
+                    return rel_addr
+
+                leftover = blob[-overlap:] if overlap else b""
+                pos += read_size
+
         return None
 
 
