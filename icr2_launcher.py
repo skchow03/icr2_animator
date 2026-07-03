@@ -30,15 +30,14 @@ from typing import Any, TextIO
 
 from animator_service import AnimatorService
 from app_settings import (
-    DEFAULT_CONFIG_PATH,
-    DEFAULT_FPS,
-    DEFAULT_TOOLTIPS_ENABLED,
-    AppSettings,
+    get_window_keywords,
+    load_app_settings,
     parse_window_keywords,
+    save_app_settings,
 )
 from icr2_logging import log_error, log_info
 from config_validation import VALID_MODES, validate_object_config
-from icr2_versions import DEFAULT_ICR2_VERSION, KNOWN_ICR2_VERSIONS
+from icr2_versions import KNOWN_ICR2_VERSIONS
 
 WAYPOINT_COLUMNS = ("x", "y", "z", "speed_mph", "rot_x", "rot_y", "rot_z")
 DEFAULT_WAYPOINT = {
@@ -183,13 +182,11 @@ class ICR2Launcher(tk.Tk):
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
 
-        self.app_settings = AppSettings()
-        selected_version = self.app_settings.selected_version(DEFAULT_ICR2_VERSION)
-        config_path = self.app_settings.config_path(DEFAULT_CONFIG_PATH)
-        fps = self.app_settings.fps(DEFAULT_FPS)
-        tooltips_enabled = self.app_settings.tooltips_enabled(
-            DEFAULT_TOOLTIPS_ENABLED
-        )
+        self.app_settings = load_app_settings()
+        selected_version = self.app_settings.selected_version()
+        config_path = self.app_settings.config_path()
+        fps = self.app_settings.fps()
+        tooltips_enabled = self.app_settings.tooltips_enabled()
 
         self.version_var = tk.StringVar(value=selected_version)
         self.window_keywords_var = tk.StringVar()
@@ -492,7 +489,7 @@ class ICR2Launcher(tk.Tk):
         self._update_mode_help()
 
     def _load_window_keywords_for_selected_version(self) -> None:
-        keywords = self.app_settings.window_keywords_for_version(self.version_var.get())
+        keywords = get_window_keywords(self.version_var.get(), self.app_settings)
         self.window_keywords_var.set(", ".join(keywords))
 
     def _install_settings_traces(self) -> None:
@@ -517,7 +514,7 @@ class ICR2Launcher(tk.Tk):
             self.app_settings.set_window_keywords_for_version(
                 self.version_var.get(), keywords
             )
-        self.app_settings.save()
+        save_app_settings(self.app_settings)
 
     def _on_version_selected(self, _event: tk.Event | None = None) -> None:
         self._load_window_keywords_for_selected_version()

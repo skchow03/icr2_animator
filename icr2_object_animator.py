@@ -415,14 +415,19 @@ def main(argv=None):
     import argparse
 
     from animator_service import AnimatorService
-    from app_settings import AppSettings, parse_window_keywords
+    from app_settings import (
+        get_window_keywords,
+        load_app_settings,
+        parse_window_keywords,
+        save_app_settings,
+    )
     from config_validation import validate_object_config
 
-    app_settings = AppSettings()
+    app_settings = load_app_settings()
     default_version = app_settings.selected_version()
     default_config = app_settings.config_path()
     default_fps = app_settings.fps()
-    default_window_keywords = app_settings.window_keywords_for_version(default_version)
+    default_window_keywords = get_window_keywords(default_version, app_settings)
     default_window_keywords_text = ", ".join(default_window_keywords)
 
     parser = argparse.ArgumentParser(
@@ -477,7 +482,7 @@ def main(argv=None):
             tooltips_enabled=app_settings.tooltips_enabled(),
         )
         app_settings.set_window_keywords_for_version(args.version, window_keywords)
-        app_settings.save()
+        save_app_settings(app_settings)
 
     service = AnimatorService(
         version=args.version, verbose=True, fps=args.fps, window_keywords=window_keywords
