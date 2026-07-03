@@ -22,7 +22,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import struct
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 from icr2_logging import log_info
 from icr2_versions import ICR2_VERSION_CONFIGS, normalize_version
@@ -124,16 +124,16 @@ def _scan_region_chunked(pm: pymem.Pymem, start: int, size: int,
     return None
 
 
-def find_pattern_address(pm: pymem.Pymem, pattern_bytes: bytes) -> Optional[int]:
-    """
-    Walk all memory with VirtualQueryEx; scan only committed, readable regions.
-    Uses chunked reads to avoid huge allocations. Returns absolute address of the first match or None.
-    """
-    if not pattern_bytes:
-        return None
+def iter_readable_regions(pm: pymem.Pymem, start_addr: int = 0) -> Iterator[Tuple[int, int]]:
+    """Yield ``(base_address, region_size)`` for committed, readable memory regions.
 
+    The iterator wraps the VirtualQueryEx walk used by signature scanning so other
+    searches can avoid probing large unreadable spans of the process address
+    space. ``start_addr`` allows callers to skip directly to an interesting
+    absolute address.
+    """
     mbi = MEMORY_BASIC_INFORMATION()
-    addr = 0
+    addr = max(0, int(start_addr))
     VirtualQueryEx = ctypes.windll.kernel32.VirtualQueryEx
 
     while True:
@@ -144,14 +144,31 @@ def find_pattern_address(pm: pymem.Pymem, pattern_bytes: bytes) -> Optional[int]
         if not ok:
             break  # reached end of address space
 
+        region_base = int(mbi.BaseAddress)
         region_size = int(mbi.RegionSize) or 0
         if (mbi.State == MEM_COMMIT) and (mbi.Protect & PAGE_READABLE) and (region_size > 0):
-            hit = _scan_region_chunked(pm, addr, region_size, pattern_bytes)
-            if hit is not None:
-                return hit
+            yield region_base, region_size
 
-        # Step to next region. If RegionSize is 0 (shouldn't happen), advance by a page.
-        addr += region_size if region_size else 0x1000
+        # Step to the end of the reported region. If RegionSize is 0
+        # (shouldn't happen), advance by a page to avoid an infinite loop.
+        next_addr = region_base + region_size if region_size else addr + 0x1000
+        if next_addr <= addr:
+            next_addr = addr + 0x1000
+        addr = next_addr
+
+
+def find_pattern_address(pm: pymem.Pymem, pattern_bytes: bytes) -> Optional[int]:
+    """
+    Walk all memory with VirtualQueryEx; scan only committed, readable regions.
+    Uses chunked reads to avoid huge allocations. Returns absolute address of the first match or None.
+    """
+    if not pattern_bytes:
+        return None
+
+    for region_base, region_size in iter_readable_regions(pm):
+        hit = _scan_region_chunked(pm, region_base, region_size, pattern_bytes)
+        if hit is not None:
+            return hit
 
     return None
 
