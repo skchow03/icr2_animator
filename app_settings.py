@@ -49,11 +49,12 @@ class AppSettings:
 
     def selected_version(self, default: str = DEFAULT_ICR2_VERSION) -> str:
         """Return the configured ICR2 version or a safe default."""
-        value = self.config.get(LAUNCHER_SECTION, "version", fallback=default)
+        safe_default = _normalize_version_or_default(default)
+        value = self.config.get(LAUNCHER_SECTION, "version", fallback=safe_default)
         try:
             return normalize_version(value)
         except ValueError:
-            return default
+            return safe_default
 
     def config_path(self, default: str = DEFAULT_CONFIG_PATH) -> str:
         """Return the configured JSON object config path."""
@@ -76,7 +77,7 @@ class AppSettings:
             return self.config.getboolean(
                 LAUNCHER_SECTION, "tooltips_enabled", fallback=default
             )
-        except ValueError:
+        except (configparser.Error, ValueError):
             return default
 
     def set_launcher_settings(
@@ -90,16 +91,20 @@ class AppSettings:
         """Store launcher-level settings without object animation definitions."""
         if not self.config.has_section(LAUNCHER_SECTION):
             self.config.add_section(LAUNCHER_SECTION)
-        self.config.set(LAUNCHER_SECTION, "version", normalize_version(version))
-        self.config.set(LAUNCHER_SECTION, "config_path", config_path.strip())
-        self.config.set(LAUNCHER_SECTION, "fps", fps.strip())
+        self.config.set(
+            LAUNCHER_SECTION, "version", _normalize_version_or_default(version)
+        )
+        self.config.set(
+            LAUNCHER_SECTION, "config_path", config_path.strip() or DEFAULT_CONFIG_PATH
+        )
+        self.config.set(LAUNCHER_SECTION, "fps", _normalize_fps_or_default(fps))
         self.config.set(
             LAUNCHER_SECTION, "tooltips_enabled", "yes" if tooltips_enabled else "no"
         )
 
     def window_keywords_for_version(self, version: str) -> tuple[str, ...]:
         """Return configured window keywords or the built-in default for a version."""
-        normalized = normalize_version(version)
+        normalized = _normalize_version_or_default(version)
         value = self.config.get(WINDOW_KEYWORDS_SECTION, normalized, fallback="")
         keywords = parse_window_keywords(value)
         if keywords:
@@ -110,8 +115,10 @@ class AppSettings:
         self, version: str, keywords: Iterable[str]
     ) -> None:
         """Store window keywords for a version without saving immediately."""
-        normalized = normalize_version(version)
+        normalized = _normalize_version_or_default(version)
         keyword_list = normalize_window_keywords(keywords)
+        if not keyword_list:
+            keyword_list = list(ICR2_VERSION_CONFIGS[normalized].window_keywords)
         if not self.config.has_section(WINDOW_KEYWORDS_SECTION):
             self.config.add_section(WINDOW_KEYWORDS_SECTION)
         self.config.set(WINDOW_KEYWORDS_SECTION, normalized, ", ".join(keyword_list))
@@ -134,3 +141,42 @@ def normalize_window_keywords(keywords: Iterable[str]) -> list[str]:
     for keyword in keywords:
         normalized.extend(parse_window_keywords(str(keyword)))
     return normalized
+
+
+def _normalize_version_or_default(
+    version: str, default: str = DEFAULT_ICR2_VERSION
+) -> str:
+    """Return a known ICR2 version, falling back when input is missing or invalid."""
+    try:
+        return normalize_version(version)
+    except (AttributeError, ValueError):
+        if default == DEFAULT_ICR2_VERSION:
+            return DEFAULT_ICR2_VERSION
+        return normalize_version(default)
+
+
+def _normalize_fps_or_default(fps: str, default: str = DEFAULT_FPS) -> str:
+    """Return a positive FPS string, falling back for malformed or non-positive input."""
+    value = str(fps).strip()
+    try:
+        if float(value) <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return default
+    return value
+
+
+def load_app_settings(path: Path | None = None) -> AppSettings:
+    """Load application settings through the centralized settings API."""
+    return AppSettings(path)
+
+
+def save_app_settings(settings: AppSettings) -> None:
+    """Save application settings through the centralized settings API."""
+    settings.save()
+
+
+def get_window_keywords(version: str, settings: AppSettings | None = None) -> list[str]:
+    """Return configured or built-in fallback window keywords for a version."""
+    app_settings = settings if settings is not None else load_app_settings()
+    return list(app_settings.window_keywords_for_version(version))
