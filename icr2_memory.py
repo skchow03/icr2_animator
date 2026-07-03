@@ -58,6 +58,18 @@ class MEMORY_BASIC_INFORMATION(ctypes.Structure):
     ]
 
 
+def _address_value(value: object) -> int:
+    """Return an integer address for ctypes pointer fields.
+
+    ``ctypes`` represents a null ``LPVOID`` as ``None`` on some Python/Windows
+    combinations. VirtualQueryEx can legitimately report the first region at
+    address 0, so normalize that value instead of passing it to ``int()``.
+    """
+    if value is None:
+        return 0
+    return int(value)
+
+
 # ----------------------------
 # Window discovery + signature
 # ----------------------------
@@ -144,7 +156,7 @@ def iter_readable_regions(pm: pymem.Pymem, start_addr: int = 0) -> Iterator[Tupl
         if not ok:
             break  # reached end of address space
 
-        region_base = int(mbi.BaseAddress)
+        region_base = _address_value(mbi.BaseAddress)
         region_size = int(mbi.RegionSize) or 0
         if (mbi.State == MEM_COMMIT) and (mbi.Protect & PAGE_READABLE) and (region_size > 0):
             yield region_base, region_size
@@ -404,10 +416,14 @@ def _span_is_readable(pm_handle, base_addr: int, length: int) -> bool:
                               ctypes.byref(mbi),
                               ctypes.sizeof(mbi)):
             return False
+        region_base = _address_value(mbi.BaseAddress)
         region_size = int(mbi.RegionSize) or 0
         if not (mbi.State == MEM_COMMIT and (mbi.Protect & PAGE_READABLE)):
             return False
-        addr += region_size if region_size else 0x1000
+        next_addr = region_base + region_size if region_size else addr + 0x1000
+        if next_addr <= addr:
+            next_addr = addr + 0x1000
+        addr = next_addr
     return True
 
 

@@ -1019,8 +1019,14 @@ class ICR2Launcher(tk.Tk):
                 self.service.start(objects)
                 self.service.wait()
         except Exception as exc:
-            log_error("Main", f"Animator error: {exc}")
-            self.after(0, lambda: messagebox.showerror("Animator error", str(exc)))
+            error_message = str(exc)
+            log_error("Main", f"Animator error: {error_message}")
+            self.after(
+                0,
+                lambda message=error_message: messagebox.showerror(
+                    "Animator error", message
+                ),
+            )
         finally:
             self.after(0, lambda: self._set_running_state(False))
 
