@@ -149,10 +149,19 @@ ICR2 Animator works by editing the running game's memory:
 
 ## Safety notes
 
-- Use the correct version and window keywords. Wrong version settings mean wrong offsets and failed or unsafe memory interpretation.
-- Keep `search_coords` specific. The animator starts the first matching object it finds for those coordinates.
-- Stop animation before editing a config or closing the launcher.
-- This tool changes live process memory. Save your game/session state and use it on test installs first.
+ICR2 Animator includes several safeguards to reduce the risk of accidental or incorrect memory writes:
+
+- **Version-specific discovery**: the selected game version controls the expected window keywords, executable byte signature, and signature offset, so the animator can verify it has found a compatible process before calculating object addresses.
+- **Readable-memory scanning only**: object and executable-signature searches are limited to committed readable memory regions exposed by the target process.
+- **Coordinate-based object lookup**: objects are found by their configured `search_coords`, and the launcher validates that these coordinates are three integers before animation starts.
+- **Relative object addressing**: after discovery, writes are made to the object's six-value record at `exe_base + relative_address`, rather than to arbitrary user-entered absolute addresses.
+- **Six-field record writes**: object updates are constrained to the expected `x`, `y`, `z`, `rotX`, `rotY`, and `rotZ` 32-bit integer fields.
+- **Original-value restore**: before animating, the service captures each found object's original six values. Clicking **Stop animation** asks all animation threads to exit and writes those captured values back.
+- **Cooperative thread stopping**: animation threads share a stop event so the launcher can stop active writes cleanly before configs are edited or the app exits.
+
+Even with these safeguards, live process-memory editing is inherently risky. Use the correct version and window keywords; wrong version settings can produce wrong offsets and unsafe memory interpretation. Keep `search_coords` specific because the animator starts with the first matching object it finds for those coordinates. Stop animation before editing a config or closing the launcher. Save your game/session state and use the tool on test installs first.
+
+By using ICR2 Animator, you acknowledge that you are responsible for any damage, data loss, crashes, corrupted saves, system instability, or other consequences caused by using the tool or by editing live process memory.
 
 ## Development
 
