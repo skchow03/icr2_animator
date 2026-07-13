@@ -149,19 +149,21 @@ class ToolTip:
 class ConsoleRedirector:
     """File-like stream that mirrors console output into the launcher log."""
 
-    def __init__(self, original: TextIO, write_callback) -> None:
+    def __init__(self, original: TextIO | None, write_callback) -> None:
         self.original = original
         self.write_callback = write_callback
 
     def write(self, message: str) -> int:
-        self.original.write(message)
-        self.original.flush()
+        if self.original is not None:
+            self.original.write(message)
+            self.original.flush()
         if message:
             self.write_callback(message)
         return len(message)
 
     def flush(self) -> None:
-        self.original.flush()
+        if self.original is not None:
+            self.original.flush()
 
 
 class ICR2Launcher(tk.Tk):
