@@ -28,5 +28,4 @@ icr2_launcher.ini
 # build
 build/
 dist/
-build.bat
 *.spec
