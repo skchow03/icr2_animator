@@ -39,6 +39,9 @@ from icr2_logging import log_error, log_info
 from config_validation import VALID_MODES, validate_object_config
 from icr2_versions import KNOWN_ICR2_VERSIONS
 
+APP_VERSION = "1.0"
+APP_TITLE = f"ICR2 Animator Launcher v{APP_VERSION}"
+
 WAYPOINT_COLUMNS = ("x", "y", "z", "speed_mph", "rot_x", "rot_y", "rot_z")
 DEFAULT_WAYPOINT = {
     "x": 0,
@@ -171,7 +174,7 @@ class ICR2Launcher(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("ICR2 Animator Launcher")
+        self.title(APP_TITLE)
         self.geometry("1260x700")
 
         self.objects: list[dict[str, Any]] = []
@@ -271,6 +274,8 @@ class ICR2Launcher(tk.Tk):
             command=self._on_tooltips_toggle,
         )
         self.tooltips_check.grid(row=0, column=11, padx=(10, 0))
+        self.app_version_label = ttk.Label(top, text=f"Version {APP_VERSION}")
+        self.app_version_label.grid(row=0, column=12, padx=(12, 0))
 
         left = ttk.Frame(root)
         left.grid(row=1, column=0, sticky="ns", padx=(0, 10))
@@ -444,6 +449,7 @@ class ICR2Launcher(tk.Tk):
                 fps_label: TOOLTIPS["fps"],
                 self.fps_entry: TOOLTIPS["fps"],
                 self.tooltips_check: TOOLTIPS["tooltips_toggle"],
+                self.app_version_label: "ICR2 Animator application version.",
                 self.object_list: TOOLTIPS["object_list"],
                 self.console_text: "Live log of messages printed to the console by the launcher and animator service.",
                 name_label: TOOLTIPS["name"],
@@ -709,7 +715,7 @@ class ICR2Launcher(tk.Tk):
         self.is_dirty = dirty
         self.dirty_status_var.set("Unsaved changes" if dirty else "Saved")
         marker = "*" if dirty else ""
-        self.title(f"{marker}ICR2 Animator Launcher")
+        self.title(f"{marker}{APP_TITLE}")
 
     def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.delete("1.0", tk.END)

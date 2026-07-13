@@ -1,5 +1,7 @@
 # ICR2 Animator
 
+**Current version: 1.0**
+
 ICR2 Animator is a Windows Python tool for animating objects in *IndyCar Racing II* / *CART Racing* running under DOSBox or Windows (i.e. Windy). It finds objects in DOSBox/Windy memory by their current in-game coordinates (which is presumed to be unique to that specific object; it is deemed highly unlikely that the 3 coordinate values would match anything else in the game's memory), then updates their position and rotation values every animation frame so trackside objects can move, shuttle, loop, or spin while the game is running.
 
 The project includes a Tkinter launcher for editing animation JSON files and controlling animation runs.
