@@ -24,3 +24,9 @@ desktop.ini
 *.json
 objects.json
 icr2_launcher.ini
+
+# build
+build/
+dist/
+build.bat
+*.spec
