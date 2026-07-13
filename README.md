@@ -163,12 +163,10 @@ Even with these safeguards, live process-memory editing is inherently risky. Use
 
 By using ICR2 Animator, you acknowledge that you are responsible for any damage, data loss, crashes, corrupted saves, system instability, or other consequences caused by using the tool or by editing live process memory.
 
-## Development
+## License
 
-Run the current automated tests with:
+ICR2 Animator is licensed under the MIT License. See [LICENSE](LICENSE).
 
-```bash
-python -m unittest
-```
+## Disclaimer
 
-The test suite currently covers launcher settings defaults, sanitization, and keyword handling. Live memory animation requires a supported game process and is not covered by these unit tests.
+ICR2 Animator is an unofficial community project and is not affiliated with or endorsed by Papyrus Design Group, Sierra On-Line, or the current owners of the IndyCar Racing II or CART Racing trademarks.
