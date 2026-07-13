@@ -33,7 +33,7 @@ ICR2_VERSION_CONFIGS: dict[str, ICR2VersionConfig] = {
     "WINDY": ICR2VersionConfig(
         window_keywords=("cart racing"),
         signature_bytes=_LICENSE_WITH_BOB_SIGNATURE,
-        signature_offset=int("A0D78", 16),
+        signature_offset=int("F5A7C", 16),
     ),
 }
 
