@@ -1,7 +1,7 @@
 import unittest
 from io import StringIO
 
-from icr2_animator_launcher import ConsoleRedirector
+from icr2_animator import ConsoleRedirector
 
 
 class ConsoleRedirectorTest(unittest.TestCase):

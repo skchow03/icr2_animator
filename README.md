@@ -28,7 +28,7 @@ python -m pip install pymem pywin32
 2. Start the launcher:
 
    ```powershell
-   python icr2_animator_launcher.py
+   python icr2_animator.py
    ```
 
 3. Choose the matching game version in the launcher.
@@ -42,7 +42,7 @@ python -m pip install pymem pywin32
 
 ## Launcher settings
 
-The launcher stores application preferences in an INI file next to the launcher executable/script. The included `icr2_animator_launcher.ini` shows the format:
+The launcher stores application preferences in an INI file next to the launcher executable/script. The included `icr2_animator.ini` shows the format:
 
 ```ini
 [launcher]

@@ -6,7 +6,7 @@ The launcher keeps the existing ``objects.json`` shape::
 
 Run this primary launcher with::
 
-    python icr2_animator_launcher.py
+    python icr2_animator.py
 
 Object fields that are lists (``search_coords``, ``waypoints``, and
 ``spin_rate_deg_per_sec``) can still be edited as JSON snippets so current
