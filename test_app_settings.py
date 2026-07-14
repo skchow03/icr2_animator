@@ -74,6 +74,25 @@ class AppSettingsTest(unittest.TestCase):
             list(ICR2_VERSION_CONFIGS[DEFAULT_ICR2_VERSION].window_keywords),
         )
 
+    def test_persists_selected_version_and_per_version_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "settings.ini"
+            settings = AppSettings(path)
+            settings.set_launcher_settings(
+                version="WINDY",
+                config_path="objects.json",
+                fps="60",
+                tooltips_enabled=False,
+            )
+            settings.set_window_keywords_for_version("REND32A", ["dosbox", "cart"])
+            settings.set_window_keywords_for_version("WINDY", ["cart racing"])
+            save_app_settings(settings)
+            reloaded = AppSettings(path)
+
+        self.assertEqual(reloaded.selected_version(), "WINDY")
+        self.assertEqual(get_window_keywords("REND32A", reloaded), ["dosbox", "cart"])
+        self.assertEqual(get_window_keywords("WINDY", reloaded), ["cart racing"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -184,6 +184,7 @@ class ICR2Launcher(tk.Tk):
         self.is_animating = False
         self.is_dirty = False
         self._populating_editor = False
+        self._loading_window_keywords = False
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
 
@@ -498,11 +499,14 @@ class ICR2Launcher(tk.Tk):
 
     def _load_window_keywords_for_selected_version(self) -> None:
         keywords = get_window_keywords(self.version_var.get(), self.app_settings)
-        self.window_keywords_var.set(", ".join(keywords))
+        self._loading_window_keywords = True
+        try:
+            self.window_keywords_var.set(", ".join(keywords))
+        finally:
+            self._loading_window_keywords = False
 
     def _install_settings_traces(self) -> None:
         for variable in (
-            self.version_var,
             self.config_path_var,
             self.fps_var,
             self.tooltips_enabled_var,
@@ -518,7 +522,7 @@ class ICR2Launcher(tk.Tk):
             tooltips_enabled=self.tooltips_enabled_var.get(),
         )
         keywords = parse_window_keywords(self.window_keywords_var.get())
-        if keywords:
+        if keywords and not self._loading_window_keywords:
             self.app_settings.set_window_keywords_for_version(
                 self.version_var.get(), keywords
             )
